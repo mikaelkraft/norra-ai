@@ -1,6 +1,5 @@
 #football_api.py
 import random
-from telnetlib import AUTHENTICATION
 import requests
 import datetime
 import tweepy
