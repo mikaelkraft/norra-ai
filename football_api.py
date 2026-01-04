@@ -25,17 +25,77 @@ def fetch_team_data(api_key, league_id):
         print(f"Failed to fetch team data. Status code: {response.status_code}")
         return None
 
-api_key = "008362339amsh83fe9d1584cd2e8p150ebejsnd291e823113c"
-league_ids = [2, 3, 848, 39, 40, 78, 140, 135, 61, 94, 203, 399]  # List of league IDs
+import os
+from dotenv import load_dotenv
 
-all_teams_data = {}
+load_dotenv()
 
-for league_id in league_ids:
-    teams_data = fetch_team_data(api_key, league_id)
-    if teams_data:
-        all_teams_data[league_id] = teams_data
+api_key = os.getenv("RAPIDAPI_KEY")
+
+# League Tiers
+TIER_1_LEAGUES = [
+    2,    # Champions League
+    3,    # Europa League
+    848,  # Conference League
+    39,   # Premier League
+    140,  # La Liga
+    135,  # Serie A
+    78,   # Bundesliga
+    61,   # Ligue 1
+    88,   # Eredivisie
+    94,   # Primeira Liga
+    71,   # Brasileiro Série A
+    203,  # Super Lig
+    1,    # World Cup
+    4,    # Euro Championship
+    9,    # Copa America
+    6     # AFCON
+]
+
+TIER_2_LEAGUES = [
+    40,   # Championship
+    141,  # Segunda Division
+    136,  # Serie B
+    79,   # Bundesliga 2
+    62,   # Ligue 2
+    399,  # Superliga (Denmark)
+    253   # MLS
+]
+
+def get_prioritized_fixtures(date, api_key):
+    """
+    Fetches fixtures for the given date, prioritizing Tier 1 leagues.
+    If no Tier 1 fixtures are found, it falls back to Tier 2.
+    """
+    print(f"Checking for Tier 1 matches on {date}...")
+    all_fixtures = []
+    
+    # Try Tier 1
+    for league_id in TIER_1_LEAGUES:
+        # We use the current year as season, or date.year
+        # Note: Some leagues cross years (2023-2024), season 2023.
+        # For simplicity, we'll try to find fixtures for this date specifically.
+        fixtures = get_fixtures(api_key, league_id=league_id, date=date)
+        if fixtures:
+            all_fixtures.extend(fixtures)
+    
+    if all_fixtures:
+        print(f"Found {len(all_fixtures)} Tier 1 matches.")
+        return all_fixtures
+
+    print("No Tier 1 matches found. Checking Tier 2...")
+    # Fallback to Tier 2
+    for league_id in TIER_2_LEAGUES:
+        fixtures = get_fixtures(api_key, league_id=league_id, date=date)
+        if fixtures:
+            all_fixtures.extend(fixtures)
+            
+    if all_fixtures:
+        print(f"Found {len(all_fixtures)} Tier 2 matches.")
     else:
-        print(f"Failed to fetch team data for League ID {league_id}")
+        print("No matches found in Tier 1 or Tier 2.")
+        
+    return all_fixtures
 
 def get_leagues(api_key):
     url = "https://api-football-v1.p.rapidapi.com/v3/leagues"
@@ -51,13 +111,18 @@ def get_leagues(api_key):
         print("Failed to retrieve leagues. Status code:", response.status_code)
         return None
 
-def get_fixtures(league_id, season, api_key):
+def get_fixtures(api_key, league_id=None, season=None, date=None, team_id=None, next_n=None):
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
-    querystring = {
-        "league": str(league_id),
-        "season": str(season),
-        "current": "true"
-    }
+    querystring = {}
+    if league_id: querystring["league"] = str(league_id)
+    if season: querystring["season"] = str(season)
+    if date: querystring["date"] = str(date)
+    if team_id: querystring["team"] = str(team_id)
+    if next_n: querystring["next"] = str(next_n)
+    
+    if not querystring and not next_n:
+        querystring["current"] = "true"
+
     headers = {
         "X-RapidAPI-Key": api_key,
         "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
@@ -65,10 +130,10 @@ def get_fixtures(league_id, season, api_key):
     response = requests.get(url, headers=headers, params=querystring)
 
     if response.status_code == 200:
-        return response.json()
+        return response.json().get("response", [])
     else:
-        print("Failed to retrieve fixtures. Status code:", response.status_code)
-        return None
+        print(f"Failed to retrieve fixtures. Status code: {response.status_code}")
+        return []
 
 
 # Function to retrieve team statistics for a specific team in a league and season
@@ -206,51 +271,47 @@ def fetch_predictions(league_ids, api_key):
     return predictions
 
 def generate_predictions(fixtures_data):
-    predictions = {}
-
-    for fixture in fixtures_data:
-        home_team = fixture.get("teams", {}).get("home", {}).get("name", "Home")
-        away_team = fixture.get("teams", {}).get("away", {}).get("name", "Away")
-
-        # Replace this with your actual prediction logic
-        # For simplicity, assume a random prediction (0 or 1)
-        prediction = random.choice([0, 1])
-
-        predictions[f"{home_team} vs {away_team}"] = prediction
-
-    return predictions
-
-def generate_predictions(fixtures_data):
-    # Placeholder logic for generating predictions
-    # Replace this with your actual prediction algorithm
+    """
+    Placeholder logic for generating predictions.
+    This will be replaced by the more advanced logic in prediction_model.py.
+    """
     predictions = {}
     for match in fixtures_data:
-        predictions[match["fixture"]["id"]] = "1X2 Prediction"
+        fixture_id = match.get("fixture", {}).get("id")
+        home = match.get("teams", {}).get("home", {}).get("name")
+        away = match.get("teams", {}).get("away", {}).get("name")
+        predictions[fixture_id] = f"{home} vs {away}: 1X2 Prediction"
     return predictions
 
-def post_predictions(predictions, api_key, consumer_key, consumer_secret, access_token, access_token_secret):
-    # Authenticate with Tweepy API
-    auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
-    auth.set_access_token(access_token, access_token_secret)
-    api = tweepy.API(auth)
-
-    # Check if authentication is successful
-    if api.verify_credentials():
-        print("Authentication with Twitter is successful.")
+# Function to retrieve lineups for a specific fixture
+def get_lineups(fixture_id, api_key):
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups"
+    querystring = {"fixture": str(fixture_id)}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        return response.json().get("response", [])
     else:
-        print("Authentication with Twitter failed. Please check your credentials.")
-        return
+        print(f"Failed to retrieve lineups. Status code: {response.status_code}")
+        return []
 
-    # Post predictions to Twitter
-    for match, prediction in predictions.items():
-        # Adjust the format of 'match' and 'prediction' based on your data structure
-        tweet = f"{match}: {prediction}"
-
-        try:
-            api.update_status(tweet)
-            print(f"Prediction posted on Twitter: {tweet}")
-        except tweepy.TweepError as e:
-            print(f"Failed to post prediction on Twitter: {e}")
+# Function to retrieve predictions for a specific fixture
+def get_predictions(fixture_id, api_key):
+    url = "https://api-football-v1.p.rapidapi.com/v3/predictions"
+    querystring = {"fixture": str(fixture_id)}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        return response.json().get("response", [])
+    else:
+        print(f"Failed to retrieve predictions. Status code: {response.status_code}")
+        return []
 
 if __name__ == "__main__":
     # Example usage

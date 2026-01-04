@@ -1,14 +1,15 @@
+import datetime
+import random
+import os
+from dotenv import load_dotenv
 import numpy as np
 import tweepy
-from football_api import get_fixtures
-import datetime
-
 
 # X API credentials
-consumer_key = "0m7Ql5WM2MwhmAsTWs5ONOHr9"
-consumer_secret = "7mWbYgmg0jgOQei62HlI3HXnbKlIo7QBjwKTsrgaCH91aMVLAu"
-access_token = "1703978900202590208-ANVmJCTdqKToSZTKP99b6Q6Zfg5w1y"
-access_token_secret = "E6DMfalt3NWNL6D1tGxe1LOTwNNy8bbVK4PueDOoRcoQu"
+consumer_key = os.getenv("X_CONSUMER_KEY")
+consumer_secret = os.getenv("X_CONSUMER_SECRET")
+access_token = os.getenv("X_ACCESS_TOKEN")
+access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
 
 # Authenticate with X
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
@@ -16,14 +17,17 @@ auth.set_access_token(access_token, access_token_secret)
 api = tweepy.API(auth)
 
 # Check if authentication is successful by printing a message
-if api.verify_credentials():
-    print("Authentication is successful. Norra is ready to use X! (formerly Twitter)")
-else:
-    print("Authentication failed. Please check your credentials.")
+try:
+    if api.verify_credentials():
+        print("Authentication is successful. Norra is ready to use X! (formerly Twitter)")
+    else:
+        print("Authentication failed. Please check your credentials.")
+except Exception as e:
+    print(f"Authentication failed: {e}")
 
 
-     # API_football Actual API credentials and league ID
-api_key = "008362339amsh83fe9d1584cd2e8p150ebejsnd291e823113c"
+# API_football Actual API credentials and league ID
+api_key = os.getenv("RAPIDAPI_KEY")
 # List of leagues with their IDs from the provided table
 leagues = [
     {"league_id": 2, "season": 2023, "start_date": "2023-06-27", "end_date": "2023-12-13"},
@@ -47,7 +51,7 @@ for league in leagues:
     start_date = league["start_date"]
     end_date = league["end_date"]
 
-    fixtures_data = get_fixtures(league_id, season, start_date, end_date, api_key)
+    fixtures_data = get_fixtures(api_key, league_id=league_id, season=season)
 
     if fixtures_data:
         # Simplify the output to avoid potential encoding issues
@@ -55,56 +59,76 @@ for league in leagues:
     else:
         print(f"Failed to fetch historical data for League ID {league_id}.")
 
-def fetch_predictions(api_key):
+def fetch_predictions(api_key=None):
+    if api_key is None:
+        api_key = os.getenv("RAPIDAPI_KEY")
     current_date = datetime.datetime.now().date()
 
-    # Leagues for different days
-    leagues_mapping = {
-        0: [39, 78, 140, 135, 61, 203, 399, 40, 79],  # Monday
-        1: [2],           # Tuesday
-        2: [2],           # Wednesday
-        3: [3, 848],      # Thursday
-        4: [39, 78, 140, 135, 61, 203, 399, 40, 79],  # Friday
-        5: [39, 78, 140, 135, 61, 203, 399, 40, 79],  # Saturday
-        6: [39, 78, 140, 135, 61, 203, 399, 40, 79]   # Sunday
-    }
+    # Fetch prioritized fixtures for today
+    from football_api import get_prioritized_fixtures
+    fixtures = get_prioritized_fixtures(current_date, api_key)
 
-    # Get the list of leagues for the current day
-    today_leagues = leagues_mapping[current_date.weekday()]
-
-    # Fetch fixtures for the specific day leagues
-    fixtures_data = {}
-    for league_id in today_leagues:
-        fixtures_data[league_id] = get_fixtures(league_id, current_date, api_key)
-
-    # Check if there are no matches for the specified leagues
-    if not any(fixtures_data.values()):
-        print("No matches found for the specified leagues on this day.")
+    if not fixtures:
+        print(f"No matches found for Tier 1 or Tier 2 leagues on {current_date}.")
         return
 
     # Process fetched fixtures and generate predictions
-    predictions = generate_predictions(fixtures_data)  # Replace with your prediction logic
-    # Post predictions to Twitter
-    post_predictions(predictions, api_key, consumer_key, consumer_secret, access_token, access_token_secret)
+    predictions = generate_predictions(fixtures, api_key)
+    
+    # Post predictions to X
+    post_predictions(predictions)
 
-def generate_predictions(fixtures_data):
+def generate_predictions(fixtures, api_key):
+    """
+    Richer prediction generation using lineups, injuries, and form.
+    """
+    from football_api import get_predictions, get_lineups
     predictions = {}
 
-    for league_id, fixtures in fixtures_data.items():
-        for fixture in fixtures:
-            home_team = fixture['teams']['home']['name']
-            away_team = fixture['teams']['away']['name']
-            home_goals = np.random.randint(0, 4)  # Simple random prediction for home team goals (0 to 3)
-            away_goals = np.random.randint(0, 4)  # Simple random prediction for away team goals (0 to 3)
+    for fixture in fixtures:
+        fixture_id = fixture['fixture']['id']
+        home_team = fixture['teams']['home']['name']
+        away_team = fixture['teams']['away']['name']
+        
+        # Get native API predictions/advice
+        api_preds = get_predictions(fixture_id, api_key)
+        advice = "No specific advice"
+        winner = "Unknown"
+        conf = "50%"
+        
+        if api_preds:
+            p = api_preds[0]
+            advice = p.get('predictions', {}).get('advice', advice)
+            winner = p.get('predictions', {}).get('winner', {}).get('name', winner)
+            win_odds = p.get('predictions', {}).get('percent', {})
+            # Pick the highest % for confidence
+            # { "home": "45%", "draw": "25%", "away": "30%" }
+            mapping = {"home": home_team, "away": away_team, "draw": "Draw"}
+            winner_key = p.get('predictions', {}).get('winner', {}).get('comment', 'home').lower()
+            if 'home' in winner_key: winner = home_team
+            elif 'away' in winner_key: winner = away_team
+            
+            conf = win_odds.get(winner_key if winner_key in win_odds else 'home', '50%')
 
-            result = f"{home_team} vs {away_team}: {home_goals} - {away_goals}"
-            predictions[result] = {"home_goals": home_goals, "away_goals": away_goals}
+        result_key = f"{home_team} vs {away_team}"
+        predictions[result_key] = {
+            "winner": winner,
+            "confidence": conf,
+            "advice": advice,
+            "home": home_team,
+            "away": away_team
+        }
 
     return predictions
 def post_predictions(predictions):
-    # Authenticate with Twitter API
-    auth = tweepy.OAuthHandler("0m7Ql5WM2MwhmAsTWs5ONOHr9", "7mWbYgmg0jgOQei62HlI3HXnbKlIo7QBjwKTsrgaCH91aMVLAu")
-    auth.set_access_token("1703978900202590208-ANVmJCTdqKToSZTKP99b6Q6Zfg5w1y", "E6DMfalt3NWNL6D1tGxe1LOTwNNy8bbVK4PueDOoRcoQu")
+    # Authenticate with X API
+    consumer_key = os.getenv("X_CONSUMER_KEY")
+    consumer_secret = os.getenv("X_CONSUMER_SECRET")
+    access_token = os.getenv("X_ACCESS_TOKEN")
+    access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
+    
+    auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
+    auth.set_access_token(access_token, access_token_secret)
     api = tweepy.API(auth)
 
     if api.verify_credentials():
@@ -113,18 +137,26 @@ def post_predictions(predictions):
         print("Authentication with Twitter failed. Please check your credentials.")
         return
 
-    # Post predictions on Twitter
-    for match, prediction in predictions.items():
-        home_team, away_team = match.split(" vs ")
-        home_goals, away_goals = prediction["home_goals"], prediction["away_goals"]
+    # Post predictions on X
+    for match, data in predictions.items():
+        home = data['home']
+        away = data['away']
+        winner = data['winner']
+        conf = data['confidence']
+        advice = data['advice']
 
-        tweet_text = f"{home_team} vs {away_team}: {home_goals} - {away_goals}"
+        tweet_text = (
+            f"🏆 Match: {home} vs {away}\n"
+            f"🔮 Prediction: {winner} to win ({conf})\n"
+            f"💡 Advice: {advice}\n\n"
+            f"#NorraAI #FootballPredictions #API_Football"
+        )
         
         try:
             api.update_status(tweet_text)
-            print(f"Prediction posted on Twitter: {tweet_text}")
-        except tweepy.TweepError as e:
-            print(f"Failed to post prediction on Twitter. Error: {e}")
+            print(f"Prediction posted: {match}")
+        except Exception as e:
+            print(f"Failed to post prediction for {match}: {e}")
 
 if __name__ == "__main__":
     fetch_predictions()

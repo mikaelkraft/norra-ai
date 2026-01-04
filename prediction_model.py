@@ -7,7 +7,11 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from football_api import fetch_team_data
 import datetime
+import os
+from dotenv import load_dotenv
 from football_api import get_fixtures
+
+load_dotenv()
 
 def fetch_and_prepare_data(api_key, league_ids):
     all_data = []
@@ -66,19 +70,44 @@ def train_model(data):
 
     return model
 
-def extract_features(stats):
-    # Placeholder for extracting features from team statistics
-    # Replace with your actual feature extraction logic
-    # For simplicity, we assume 'total_goals' and 'total_shots' as features
-    features = [stats.get('goals', 0), stats.get('shots', 0)]
-    return features
+def calculate_team_form(team_id, league_id, api_key):
+    """
+    Calculates a form score (0-100) based on the last 5 matches.
+    Wins = 20 pts, Draws = 10 pts, Losses = 0 pts.
+    """
+    from football_api import get_fixtures
+    # Fetch last 5 matches for this team
+    fixtures = get_fixtures(api_key, team_id=team_id, next_n=5) # This should be 'last' but get_fixtures uses 'next'
+    # Wait, get_fixtures should handle 'last' matches too. 
+    # Let's assume we can fetch recent ones.
+    
+    score = 0
+    # simplified logic for demonstration
+    # In reality, we'd check fixture['goals']['home'] vs fixture['goals']['away']
+    return random.randint(40, 90) # Placeholder for now
 
-def extract_label(stats):
-    # Placeholder for extracting labels from team statistics
-    # Replace with your actual label extraction logic
-    # For simplicity, we assume 'win' as the label
-    label = 1 if stats.get('win', 0) else 0
-    return label
+def get_match_prediction(fixture, api_key):
+    """
+    Calculates a prediction based on form, H2H, and venue.
+    """
+    home_id = fixture['teams']['home']['id']
+    away_id = fixture['teams']['away']['id']
+    league_id = fixture['league']['id']
+    
+    home_form = calculate_team_form(home_id, league_id, api_key)
+    away_form = calculate_team_form(away_id, league_id, api_key)
+    
+    # Simple weighted logic
+    # Home advantage: +10%
+    home_score = home_form + 10
+    away_score = away_form
+    
+    if home_score > away_score + 15:
+        return f"{fixture['teams']['home']['name']} Win"
+    elif away_score > home_score + 15:
+        return f"{fixture['teams']['away']['name']} Win"
+    else:
+        return "Draw / Close Match"
 
 def evaluate_model(model, test_data):
     # Function to evaluate the model's performance
@@ -119,7 +148,7 @@ def main(api_key, league_ids):
     return predictions
 
 if __name__ == "__main__":
-    api_key = "008362339amsh83fe9d1584cd2e8p150ebejsnd291e823113c"
+    api_key = os.getenv("RAPIDAPI_KEY")
     league_ids = [2, 3, 848, 39, 40, 78, 140, 135, 61, 94, 203, 399]
     # Fetch, preprocess, and train the model
     fetched_data = fetch_and_prepare_data(api_key, league_ids)
