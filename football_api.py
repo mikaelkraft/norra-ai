@@ -6,7 +6,7 @@ import tweepy
 import pandas as pd
 import numpy as np
 
-from Norra import post_predictions
+
 
 def fetch_team_data(api_key, league_id):
     url = "https://api-football-v1.p.rapidapi.com/v3/teams"
