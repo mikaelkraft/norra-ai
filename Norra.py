@@ -2,28 +2,13 @@ import datetime
 import random
 import os
 from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
 import numpy as np
 import tweepy
-
-# X API credentials
-consumer_key = os.getenv("X_CONSUMER_KEY")
-consumer_secret = os.getenv("X_CONSUMER_SECRET")
-access_token = os.getenv("X_ACCESS_TOKEN")
-access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
-
-# Authenticate with X
-auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
-auth.set_access_token(access_token, access_token_secret)
-api = tweepy.API(auth)
-
-# Check if authentication is successful by printing a message
-try:
-    if api.verify_credentials():
-        print("Authentication is successful. Norra is ready to use X! (formerly Twitter)")
-    else:
-        print("Authentication failed. Please check your credentials.")
-except Exception as e:
-    print(f"Authentication failed: {e}")
+from football_api import get_fixtures
 
 
 # API_football Actual API credentials and league ID
