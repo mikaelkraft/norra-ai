@@ -13,36 +13,31 @@ from football_api import get_fixtures
 
 # API_football Actual API credentials and league ID
 api_key = os.getenv("RAPIDAPI_KEY")
-# List of leagues with their IDs from the provided table
+# List of leagues with their IDs (updated for 2025/26 seasons)
 leagues = [
-    {"league_id": 2, "season": 2023, "start_date": "2023-06-27", "end_date": "2023-12-13"},
-    {"league_id": 39, "season": 2023, "start_date": "2023-10-28", "end_date": "2023-11-05"},
-    {"league_id": 40, "season": 2023, "start_date": "2023-08-04", "end_date": "2024-05-04"},
-    {"league_id": 78, "season": 2023, "start_date": "2023-08-18", "end_date": "2024-05-18"},
-    {"league_id": 79, "season": 2023, "start_date": "2023-07-28", "end_date": "2024-05-19"},
-    {"league_id": 140, "season": 2023, "start_date": "2023-08-11", "end_date": "2024-05-26"},
-    {"league_id": 135, "season": 2023, "start_date": "2023-08-19", "end_date": "2024-05-26"},
-    {"league_id": 61, "season": 2023, "start_date": "2023-08-13", "end_date": "2024-05-18"},
-    {"league_id": 94, "season": 2023, "start_date": "2023-08-13", "end_date": "2024-05-19"},
-    {"league_id": 203, "season": 2023, "start_date": "2023-08-13", "end_date": "2024-05-19"},
-    {"league_id": 399, "season": 2024, "start_date": "2023-09-17", "end_date": "2024-06-09"}
-    
+    {"league_id": 2, "season": 2025, "start_date": "2025-06-27", "end_date": "2025-12-13"},
+    {"league_id": 39, "season": 2025, "start_date": "2025-10-28", "end_date": "2026-11-05"},
+    {"league_id": 40, "season": 2025, "start_date": "2025-08-04", "end_date": "2026-05-04"},
+    {"league_id": 78, "season": 2025, "start_date": "2025-08-18", "end_date": "2026-05-18"},
+    {"league_id": 79, "season": 2025, "start_date": "2025-07-28", "end_date": "2026-05-19"},
+    {"league_id": 140, "season": 2025, "start_date": "2025-08-11", "end_date": "2026-05-26"},
+    {"league_id": 135, "season": 2025, "start_date": "2025-08-19", "end_date": "2026-05-26"},
+    {"league_id": 61, "season": 2025, "start_date": "2025-08-13", "end_date": "2026-05-18"},
+    {"league_id": 94, "season": 2025, "start_date": "2025-08-13", "end_date": "2026-05-19"},
+    {"league_id": 203, "season": 2025, "start_date": "2025-08-13", "end_date": "2026-05-19"},
+    {"league_id": 399, "season": 2025, "start_date": "2025-09-17", "end_date": "2026-06-09"},
+    {"league_id": 6, "season": 2025, "start_date": "2025-12-21", "end_date": "2026-01-18"} # AFCON
 ]
 
-
-for league in leagues:
-    league_id = league["league_id"]
-    season = league["season"]
-    start_date = league["start_date"]
-    end_date = league["end_date"]
-
-    fixtures_data = get_fixtures(api_key, league_id=league_id, season=season)
-
-    if fixtures_data:
-        # Simplify the output to avoid potential encoding issues
-        print(f"Fetched historical data for League ID {league_id}.")
-    else:
-        print(f"Failed to fetch historical data for League ID {league_id}.")
+def run_historical_fetch():
+    for league in leagues:
+        league_id = league["league_id"]
+        season = league["season"]
+        fixtures_data = get_fixtures(api_key, league_id=league_id, season=season)
+        if fixtures_data:
+            print(f"Fetched historical data for League ID {league_id} (Season {season}).")
+        else:
+            print(f"Failed to fetch historical data for League ID {league_id}.")
 
 def fetch_predictions(api_key=None):
     if api_key is None:

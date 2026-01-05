@@ -70,13 +70,17 @@ def get_prioritized_fixtures(date, api_key):
     all_fixtures = []
     
     # Try Tier 1
+    # Many leagues use the year they start as the season ID. 
+    # For Jan 2026, season is likely 2025.
+    current_year = date.year
+    seasons_to_try = [current_year, current_year - 1]
+
     for league_id in TIER_1_LEAGUES:
-        # We use the current year as season, or date.year
-        # Note: Some leagues cross years (2023-2024), season 2023.
-        # For simplicity, we'll try to find fixtures for this date specifically.
-        fixtures = get_fixtures(api_key, league_id=league_id, date=date)
-        if fixtures:
-            all_fixtures.extend(fixtures)
+        for season in seasons_to_try:
+            fixtures = get_fixtures(api_key, league_id=league_id, date=date, season=season)
+            if fixtures:
+                all_fixtures.extend(fixtures)
+                break # Found matches for this league today
     
     if all_fixtures:
         print(f"Found {len(all_fixtures)} Tier 1 matches.")
@@ -85,9 +89,11 @@ def get_prioritized_fixtures(date, api_key):
     print("No Tier 1 matches found. Checking Tier 2...")
     # Fallback to Tier 2
     for league_id in TIER_2_LEAGUES:
-        fixtures = get_fixtures(api_key, league_id=league_id, date=date)
-        if fixtures:
-            all_fixtures.extend(fixtures)
+        for season in seasons_to_try:
+            fixtures = get_fixtures(api_key, league_id=league_id, date=date, season=season)
+            if fixtures:
+                all_fixtures.extend(fixtures)
+                break
             
     if all_fixtures:
         print(f"Found {len(all_fixtures)} Tier 2 matches.")
@@ -110,7 +116,7 @@ def get_leagues(api_key):
         print("Failed to retrieve leagues. Status code:", response.status_code)
         return None
 
-def get_fixtures(api_key, league_id=None, season=None, date=None, team_id=None, next_n=None):
+def get_fixtures(api_key, league_id=None, season=None, date=None, team_id=None, next_n=None, last_n=None):
     url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
     querystring = {}
     if league_id: querystring["league"] = str(league_id)
@@ -118,8 +124,9 @@ def get_fixtures(api_key, league_id=None, season=None, date=None, team_id=None, 
     if date: querystring["date"] = str(date)
     if team_id: querystring["team"] = str(team_id)
     if next_n: querystring["next"] = str(next_n)
+    if last_n: querystring["last"] = str(last_n)
     
-    if not querystring and not next_n:
+    if not querystring and not next_n and not last_n:
         querystring["current"] = "true"
 
     headers = {
