@@ -304,6 +304,37 @@ def get_lineups(fixture_id, api_key):
         print(f"Failed to retrieve lineups. Status code: {response.status_code}")
         return []
 
+# Function to retrieve statistics for a specific fixture
+def get_fixture_statistics(fixture_id, api_key):
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/statistics"
+    querystring = {"fixture": str(fixture_id)}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        return response.json().get("response", [])
+    else:
+        print(f"Failed to retrieve statistics. Status code: {response.status_code}")
+        return []
+
+# Function to retrieve a single fixture by ID (to check results)
+def get_fixture_by_id(fixture_id, api_key):
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+    querystring = {"id": str(fixture_id)}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        data = response.json().get("response", [])
+        return data[0] if data else None
+    else:
+        print(f"Failed to retrieve fixture by ID. Status code: {response.status_code}")
+        return None
+
 # Function to retrieve predictions for a specific fixture
 def get_predictions(fixture_id, api_key):
     url = "https://api-football-v1.p.rapidapi.com/v3/predictions"
@@ -317,6 +348,36 @@ def get_predictions(fixture_id, api_key):
         return response.json().get("response", [])
     else:
         print(f"Failed to retrieve predictions. Status code: {response.status_code}")
+        return []
+
+# Function to retrieve odds for a specific fixture
+def get_odds(fixture_id, api_key):
+    url = "https://api-football-v1.p.rapidapi.com/v3/odds"
+    querystring = {"fixture": str(fixture_id)}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        return response.json().get("response", [])
+    else:
+        print(f"Failed to retrieve odds. Status code: {response.status_code}")
+        return []
+
+# Function to retrieve all fixtures for a specific date
+def get_fixtures_by_date(date_str, api_key):
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+    querystring = {"date": date_str}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        return response.json().get("response", [])
+    else:
+        print(f"Failed to retrieve fixtures for date {date_str}. Status code: {response.status_code}")
         return []
 
 if __name__ == "__main__":
