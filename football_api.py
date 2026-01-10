@@ -31,7 +31,7 @@ load_dotenv()
 
 api_key = os.getenv("RAPIDAPI_KEY")
 
-# League Tiers
+# League Tiers (Expanded for 365-day coverage)
 TIER_1_LEAGUES = [
     2,    # Champions League
     3,    # Europa League
@@ -45,6 +45,11 @@ TIER_1_LEAGUES = [
     94,   # Primeira Liga
     71,   # Brasileiro Série A
     203,  # Super Lig
+    253,  # MLS
+    307,  # Saudi Pro League
+    128,  # Argentina Liga Profesional
+    262,  # Liga MX
+    179,  # Scotland Premiership
     1,    # World Cup
     4,    # Euro Championship
     9,    # Copa America
@@ -57,50 +62,65 @@ TIER_2_LEAGUES = [
     136,  # Serie B
     79,   # Bundesliga 2
     62,   # Ligue 2
-    399,  # Superliga (Denmark)
-    253   # MLS
+    144,  # Jupiler Pro League (Belgium)
+    218,  # Austrian Bundesliga
+    207,  # Swiss Super League
+    113,  # Allsvenskan (Sweden)
+    119,  # Superliga (Denmark)
+    103,  # Eliteserien (Norway)
+    188,  # A-League (Australia)
+    98,   # J1 League (Japan)
+    305,  # Qatar Stars League
+    235,  # Russian Premier League
+    41,   # League One
+    202,  # Vietnamese V.League 1
+    399   # Superliga (Denmark alternate)
 ]
 
 def get_prioritized_fixtures(date, api_key):
     """
-    Fetches fixtures for the given date, prioritizing Tier 1 leagues.
-    If no Tier 1 fixtures are found, it falls back to Tier 2.
+    Optimized: Fetches ALL fixtures for the given date in one call,
+    then filters them locally by Tier 1 and Tier 2 lists.
     """
-    print(f"Checking for Tier 1 matches on {date}...")
-    all_fixtures = []
+    date_str = date.strftime("%Y-%m-%d")
+    print(f"Fetching global fixtures for {date_str}...")
     
-    # Try Tier 1
-    # Many leagues use the year they start as the season ID. 
-    # For Jan 2026, season is likely 2025.
-    current_year = date.year
-    seasons_to_try = [current_year, current_year - 1]
-
-    for league_id in TIER_1_LEAGUES:
-        for season in seasons_to_try:
-            fixtures = get_fixtures(api_key, league_id=league_id, date=date, season=season)
-            if fixtures:
-                all_fixtures.extend(fixtures)
-                break # Found matches for this league today
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+    querystring = {"date": date_str}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
     
-    if all_fixtures:
-        print(f"Found {len(all_fixtures)} Tier 1 matches.")
-        return all_fixtures
-
-    print("No Tier 1 matches found. Checking Tier 2...")
-    # Fallback to Tier 2
-    for league_id in TIER_2_LEAGUES:
-        for season in seasons_to_try:
-            fixtures = get_fixtures(api_key, league_id=league_id, date=date, season=season)
-            if fixtures:
-                all_fixtures.extend(fixtures)
-                break
-            
-    if all_fixtures:
-        print(f"Found {len(all_fixtures)} Tier 2 matches.")
-    else:
-        print("No matches found in Tier 1 or Tier 2.")
+    try:
+        response = requests.get(url, headers=headers, params=querystring)
+        if response.status_code != 200:
+            print(f"Failed to fetch global fixtures. Status: {response.status_code}")
+            return []
         
-    return all_fixtures
+        all_data = response.json().get("response", [])
+        print(f"Found {len(all_data)} total matches globally today.")
+        
+        # Filter Tier 1
+        tier_1_found = [f for f in all_data if f['league']['id'] in TIER_1_LEAGUES]
+        
+        if tier_1_found:
+            print(f"Found {len(tier_1_found)} matches in Tier 1 leagues.")
+            return tier_1_found
+        
+        # Fallback to Tier 2
+        print("No Tier 1 matches. Checking Tier 2...")
+        tier_2_found = [f for f in all_data if f['league']['id'] in TIER_2_LEAGUES]
+        
+        if tier_2_found:
+            print(f"Found {len(tier_2_found)} matches in Tier 2 leagues.")
+            return tier_2_found
+            
+        print("No matches found in Tier 1 or Tier 2 today.")
+        return []
+    except Exception as e:
+        print(f"Error in prioritized fixture discovery: {e}")
+        return []
 
 def get_leagues(api_key):
     url = "https://api-football-v1.p.rapidapi.com/v3/leagues"
@@ -378,6 +398,36 @@ def get_fixtures_by_date(date_str, api_key):
         return response.json().get("response", [])
     else:
         print(f"Failed to retrieve fixtures for date {date_str}. Status code: {response.status_code}")
+        return []
+
+# Function to retrieve top scorers for a league/season
+def get_top_scorers(league_id, season, api_key):
+    url = "https://api-football-v1.p.rapidapi.com/v3/players/topscorers"
+    querystring = {"league": str(league_id), "season": str(season)}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        return response.json().get("response", [])
+    else:
+        print(f"Failed to retrieve top scorers. Status code: {response.status_code}")
+        return []
+
+# Function to retrieve Extended H2H (Multi-Season)
+def get_extended_h2h(home_id, away_id, api_key, last_n=10):
+    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead"
+    querystring = {"h2h": f"{home_id}-{away_id}", "last": str(last_n)}
+    headers = {
+        "X-RapidAPI-Key": api_key,
+        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        return response.json().get("response", [])
+    else:
+        print(f"Failed to retrieve extended H2H. Status code: {response.status_code}")
         return []
 
 if __name__ == "__main__":

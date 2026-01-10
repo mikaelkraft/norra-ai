@@ -13,6 +13,14 @@ from football_api import get_fixtures
 
 load_dotenv()
 
+# Centralized analytical cache to minimize API calls
+ANALYTICAL_CACHE = {
+    "standings": {},
+    "scorers": {},
+    "h2h": {},
+    "stats": {}
+}
+
 def fetch_training_data(api_key, league_ids):
     """
     Fetches historical fixtures for training the model.
@@ -197,6 +205,85 @@ def get_halftime_prediction(home_form, away_form):
     if away_form > home_form + 20: return "Away"
     return "Draw"
 
+def calculate_league_motivation(rank, total_teams):
+    """
+    Returns a motivation score (0-15) based on league position.
+    Title race (Top 3) or Relegation (Bottom 3) have highest motivation.
+    """
+    if rank <= 3: return 15 # Title Race
+    if rank >= total_teams - 3: return 12 # Relegation Scrap
+    if rank <= 6: return 8 # European Spot Battle
+    return 0 # Mid-table comfort zone
+
+def calculate_player_star_power(team_id, league_id, season, api_key):
+    """
+    Checks if a team has top-tier scorers available.
+    Returns a booster score (0-15).
+    """
+    key = (league_id, season)
+    if key in ANALYTICAL_CACHE["scorers"]:
+        scorers = ANALYTICAL_CACHE["scorers"][key]
+    else:
+        from football_api import get_top_scorers
+        scorers = get_top_scorers(league_id, season, api_key)
+        ANALYTICAL_CACHE["scorers"][key] = scorers
+        
+    if not scorers: return 0
+    
+    # Check if any player from this team is in the top 10 scorers
+    top_scorers_count = 0
+    for player_entry in scorers[:10]:
+        if player_entry.get('statistics', [{}])[0].get('team', {}).get('id') == team_id:
+            top_scorers_count += 1
+            
+    return min(top_scorers_count * 5, 15)
+
+def calculate_deep_h2h_dominance(home_id, away_id, api_key):
+    """
+    Analyzes last 10 H2H results for historical dominance.
+    Returns a score favoring the dominant team.
+    """
+    key = tuple(sorted([home_id, away_id]))
+    if key in ANALYTICAL_CACHE["h2h"]:
+        h2h_data = ANALYTICAL_CACHE["h2h"][key]
+    else:
+        from football_api import get_extended_h2h
+        h2h_data = get_extended_h2h(home_id, away_id, api_key, last_n=10)
+        ANALYTICAL_CACHE["h2h"][key] = h2h_data
+        
+    if not h2h_data: return 0
+    
+    home_wins = 0
+    away_wins = 0
+    for match in h2h_data:
+        winner_id = match.get('teams', {}).get('home', {}).get('id') if match.get('goals', {}).get('home', 0) > match.get('goals', {}).get('away', 0) else \
+                    (match.get('teams', {}).get('away', {}).get('id') if match.get('goals', {}).get('away', 0) > match.get('goals', {}).get('home', 0) else None)
+        if winner_id == home_id: home_wins += 1
+        elif winner_id == away_id: away_wins += 1
+        
+    diff = home_wins - away_wins
+    return diff * 3 # e.g., +15 for 5-win lead
+
+def calculate_defensive_wall(team_id, league_id, season, api_key):
+    """
+    Returns a defensive strength score (0-20) based on clean sheets and GA.
+    """
+    key = (league_id, season, team_id)
+    if key in ANALYTICAL_CACHE["stats"]:
+        stats = ANALYTICAL_CACHE["stats"][key]
+    else:
+        from football_api import get_team_statistics
+        stats = get_team_statistics(league_id, season, team_id, api_key)
+        ANALYTICAL_CACHE["stats"][key] = stats
+        
+    if not stats: return 10
+    
+    clean_sheets = stats.get('response', {}).get('clean_sheet', {}).get('total', 0)
+    games_played = stats.get('response', {}).get('fixtures', {}).get('played', {}).get('total', 1)
+    
+    ratio = (clean_sheets / games_played) * 20
+    return min(ratio, 20)
+
 def get_match_prediction(fixture, api_key, model=None):
     """
     Calculates a prediction based on form, H2H, venue, Market Sentiment, and ML Model.
@@ -227,31 +314,70 @@ def get_match_prediction(fixture, api_key, model=None):
     
     # ML Model Prediction (if available)
     ml_outcome = "No ML context"
-    if model:
-        # Fetch current ranks for live inference
-        from football_api import get_team_standings
-        standings_raw = get_team_standings(league_id, 2025, api_key)
+    home_motivation, away_motivation = 0, 0
+    home_star_power, away_star_power = 0, 0
+    home_def_wall, away_def_wall = 10, 10
+    h2h_dominance = calculate_deep_h2h_dominance(home_id, away_id, api_key)
+    
+    season = fixture['league'].get('season', 2025)
+    
+    if model or True: # Always fetch standings and stars for motivation logic now
+        # Fetch current ranks and player impact
+        s_key = (league_id, season)
+        if s_key in ANALYTICAL_CACHE["standings"]:
+            standings_raw = ANALYTICAL_CACHE["standings"][s_key]
+        else:
+            from football_api import get_team_standings
+            standings_raw = get_team_standings(league_id, season, api_key)
+            ANALYTICAL_CACHE["standings"][s_key] = standings_raw
+
         home_rank, away_rank = 10, 10
+        total_teams = 20
         try:
-            league_standings = standings_raw.get('response', [])[0].get('league', {}).get('standings', [])[0]
+            league_data = standings_raw.get('response', [])[0].get('league', {})
+            league_standings = league_data.get('standings', [])[0]
+            total_teams = len(league_standings)
             for entry in league_standings:
                 tid = entry['team']['id']
                 if tid == home_id: home_rank = entry['rank']
                 if tid == away_id: away_rank = entry['rank']
         except:
             pass
+        
+        home_motivation = calculate_league_motivation(home_rank, total_teams)
+        away_motivation = calculate_league_motivation(away_rank, total_teams)
+        
+        home_star_power = calculate_player_star_power(home_id, league_id, season, api_key)
+        away_star_power = calculate_player_star_power(away_id, league_id, season, api_key)
+        
+        home_def_wall = calculate_defensive_wall(home_id, league_id, season, api_key)
+        away_def_wall = calculate_defensive_wall(away_id, league_id, season, api_key)
 
-        features = pd.DataFrame([{
-            "home_id": home_id,
-            "away_id": away_id,
-            "home_rank": home_rank, 
-            "away_rank": away_rank,
-            "home_advantage": 1
-        }])
-        ml_pred = model.predict(features)[0]
-        ml_outcome = "Home Win" if ml_pred == 1 else ("Away Win" if ml_pred == 2 else "Draw")
+        if model:
+            features = pd.DataFrame([{
+                "home_id": home_id,
+                "away_id": away_id,
+                "home_rank": home_rank, 
+                "away_rank": away_rank,
+                "home_advantage": 1
+            }])
+            ml_pred = model.predict(features)[0]
+            ml_outcome = "Home Win" if ml_pred == 1 else ("Away Win" if ml_pred == 2 else "Draw")
     
-    # Final Hybrid Outcome
+    # Rule-Engine Score (Final Beacon Hybrid)
+    home_score = home_form + 10 + (sentiment if sentiment > 0 else 0) + weather_impact + home_motivation + home_star_power + (h2h_dominance if h2h_dominance > 0 else 0)
+    away_score = away_form + (abs(sentiment) if sentiment < 0 else 0) + away_motivation + away_star_power + (abs(h2h_dominance) if h2h_dominance < 0 else 0)
+    
+    # Dynamic Over/Under Prediction (Better Accuracy)
+    total_def_score = home_def_wall + away_def_wall
+    # If both have high defensive walls (>15 each), favor Under 2.5
+    if total_def_score > 30:
+        ou_suggestion = "Under 2.5 (Strong Defense)"
+    elif total_def_score < 15:
+        ou_suggestion = "Over 2.5 (Weak Defense)"
+    else:
+        ou_suggestion = "Balanced"
+
     if home_score > away_score + 15:
         outcome = f"{fixture['teams']['home']['name']} Win"
         dc = "Home/Draw"
@@ -272,6 +398,9 @@ def get_match_prediction(fixture, api_key, model=None):
         "ht": ht_result,
         "corners": corners,
         "ml": ml_outcome,
+        "ou_refined": ou_suggestion,
+        "star_power": f"H:{home_star_power} A:{away_star_power}",
+        "h2h_dom": h2h_dominance,
         "card_risk": calculate_booking_risk(home_id, league_id, api_key)
     }
 

@@ -15,18 +15,41 @@ from football_api import get_fixtures
 api_key = os.getenv("RAPIDAPI_KEY")
 # List of leagues with their IDs (updated for 2025/26 seasons)
 leagues = [
-    {"league_id": 2, "season": 2025, "start_date": "2025-06-27", "end_date": "2025-12-13"},
-    {"league_id": 39, "season": 2025, "start_date": "2025-10-28", "end_date": "2026-11-05"},
-    {"league_id": 40, "season": 2025, "start_date": "2025-08-04", "end_date": "2026-05-04"},
-    {"league_id": 78, "season": 2025, "start_date": "2025-08-18", "end_date": "2026-05-18"},
-    {"league_id": 79, "season": 2025, "start_date": "2025-07-28", "end_date": "2026-05-19"},
-    {"league_id": 140, "season": 2025, "start_date": "2025-08-11", "end_date": "2026-05-26"},
-    {"league_id": 135, "season": 2025, "start_date": "2025-08-19", "end_date": "2026-05-26"},
-    {"league_id": 61, "season": 2025, "start_date": "2025-08-13", "end_date": "2026-05-18"},
-    {"league_id": 94, "season": 2025, "start_date": "2025-08-13", "end_date": "2026-05-19"},
-    {"league_id": 203, "season": 2025, "start_date": "2025-08-13", "end_date": "2026-05-19"},
-    {"league_id": 399, "season": 2025, "start_date": "2025-09-17", "end_date": "2026-06-09"},
-    {"league_id": 6, "season": 2025, "start_date": "2025-12-21", "end_date": "2026-01-18"} # AFCON
+    # Tier 1 & Major Internationals
+    {"league_id": 39, "season": 2025, "name": "Premier League"},
+    {"league_id": 140, "season": 2025, "name": "La Liga"},
+    {"league_id": 135, "season": 2025, "name": "Serie A"},
+    {"league_id": 78, "season": 2025, "name": "Bundesliga"},
+    {"league_id": 61, "season": 2025, "name": "Ligue 1"},
+    {"league_id": 94, "season": 2025, "name": "Primeira Liga"},
+    {"league_id": 88, "season": 2025, "name": "Eredivisie"},
+    {"league_id": 203, "season": 2025, "name": "Super Lig"},
+    {"league_id": 253, "season": 2025, "name": "MLS"},
+    {"league_id": 307, "season": 2025, "name": "Saudi Pro League"},
+    {"league_id": 71, "season": 2025, "name": "Brasileirao"},
+    {"league_id": 128, "season": 2025, "name": "Liga Profesional"},
+    {"league_id": 262, "season": 2025, "name": "Liga MX"},
+    {"league_id": 179, "season": 2025, "name": "Premiership"},
+    
+    # Continents
+    {"league_id": 2, "season": 2025, "name": "UCL"},
+    {"league_id": 3, "season": 2025, "name": "UEL"},
+    {"league_id": 848, "season": 2025, "name": "UECL"},
+    {"league_id": 6, "season": 2025, "name": "AFCON"},
+    
+    # Tier 2 & Fallbacks
+    {"league_id": 40, "season": 2025, "name": "Championship"},
+    {"league_id": 141, "season": 2025, "name": "Segunda"},
+    {"league_id": 136, "season": 2025, "name": "Serie B"},
+    {"league_id": 79, "season": 2025, "name": "2. Bundesliga"},
+    {"league_id": 62, "season": 2025, "name": "Ligue 2"},
+    {"league_id": 144, "season": 2025, "name": "Pro League"},
+    {"league_id": 113, "season": 2025, "name": "Allsvenskan"},
+    {"league_id": 119, "season": 2025, "name": "Superliga"},
+    {"league_id": 188, "season": 2025, "name": "A-League"},
+    {"league_id": 98, "season": 2025, "name": "J1 League"},
+    {"league_id": 305, "season": 2025, "name": "Qatar Stars League"},
+    {"league_id": 235, "season": 2025, "name": "Russian Premier"}
 ]
 
 
@@ -135,46 +158,97 @@ def generate_predictions(fixtures, api_key, model=None):
         }
 
     return predictions
-def post_predictions(predictions, dry_run=False):
-    # Performance Shoutout Logic
-    shoutout = ""
+def get_twitter_api():
+    """Authenticates and returns the Tweepy API object."""
+    consumer_key = os.getenv("X_CONSUMER_KEY")
+    consumer_secret = os.getenv("X_CONSUMER_SECRET")
+    access_token = os.getenv("X_ACCESS_TOKEN")
+    access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
+    
     try:
-        if os.path.exists("bot_stats.json"):
-            import json
-            with open("bot_stats.json", "r") as f:
-                stats = json.load(f)
-                if stats.get("weekly_wins", 0) >= 5:
-                    shoutout = "\n🔥 HEAVY SHOUTOUT: The Bot is on Fire! 5/7 Streak!"
-    except: pass
+        auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
+        auth.set_access_token(access_token, access_token_secret)
+        api = tweepy.API(auth)
+        if api.verify_credentials():
+            return api
+        else:
+            print("Twitter authentication failed. Check credentials.")
+    except Exception as e:
+        print(f"Twitter auth error: {e}")
+    return None
 
-    if dry_run:
-        print("\n--- DRY RUN: Predictions would be posted to X ---")
-    else:
-        # Authenticate with X API
-        # (Using v1.1 for media/legacy, but client v2 is preferred for new posts)
-        consumer_key = os.getenv("X_CONSUMER_KEY")
-        consumer_secret = os.getenv("X_CONSUMER_SECRET")
-        access_token = os.getenv("X_ACCESS_TOKEN")
-        access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
-        
-        try:
-            auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
-            auth.set_access_token(access_token, access_token_secret)
-            api = tweepy.API(auth)
-            
-            # Verify credentials explicitly for debug
-            user = api.verify_credentials()
-            if user:
-                print(f"Authenticated as @{user.screen_name}")
-            else:
-                print("Twitter auth failed: verify_credentials returned None")
-                return
-        except Exception as auth_err:
-            print(f"Twitter auth error: {auth_err}")
+def post_predictions(predictions, dry_run=False):
+    """Posts predictions to X, managing rate limits and standalone achievements."""
+    import json
+    stats_file = "bot_stats.json"
+    stats = {}
+    if os.path.exists(stats_file):
+        with open(stats_file, "r") as f:
+            stats = json.load(f)
+    
+    # --- Rate Limit Management ---
+    current_month = datetime.datetime.now().strftime("%Y-%m")
+    last_reset = stats.get("last_reset_month", "")
+    
+    if current_month != last_reset:
+        stats["monthly_posts_count"] = 0
+        stats["last_reset_month"] = current_month
+        print(f"Monthly post counter reset for {current_month}")
+
+    post_limit = 500
+    posts_remaining = post_limit - stats.get("monthly_posts_count", 0)
+    print(f"X API Posts Remaining for this month: {posts_remaining}/{post_limit}")
+
+    if posts_remaining <= 0 and not dry_run:
+        print("CRITICAL: Monthly X post limit reached. Skipping posts.")
+        return
+
+    # Authenticate once to save "Reads" quota
+    api = None
+    if not dry_run:
+        api = get_twitter_api()
+        if not api:
+            print("X authentication failed. Aborting post sequence.")
             return
 
-    # Post predictions on X
+    # --- Smart Rate Management: Engagement Check ---
+    # Disable non-essential activities if below 5% quota
+    engagement_safe = posts_remaining > (post_limit * 0.05)
+    if not engagement_safe:
+        print("WARNING: Low rate limit ( < 5%). Mode: Conservative (Predictions Only).")
+
+    # --- Standalone Achievement Shoutout ---
+    weekly_wins = stats.get("weekly_wins", 0)
+    last_shoutout = stats.get("last_shoutout_date", "")
+    today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+
+    if weekly_wins >= 5 and last_shoutout != today_str:
+        achievement_text = (
+            f"🔥 NorraAI ACHIEVEMENT UNLOCKED\n\n"
+            f"The bot is on absolute fire with a 5/7 winning streak this week! 🎯\n\n"
+            f"Consistency is key. Near-perfect predictions rolling out now.\n\n"
+            f"NorraAI Football Predictions"
+        )
+        if not dry_run and engagement_safe: # Only post if not dry run AND engagement is safe
+            try:
+                if api:
+                    api.update_status(achievement_text)
+                    stats["monthly_posts_count"] = stats.get("monthly_posts_count", 0) + 1
+                    stats["last_shoutout_date"] = today_str
+                    update_bot_stats(stats)
+                    print("Achievement shoutout posted as a separate tweet!")
+            except Exception as e:
+                print(f"Failed to post achievement tweet: {e}")
+        else:
+            print(f"\n[DRY RUN ACHIEVEMENT TWEET]:\n{achievement_text}")
+
+    # --- Post Match Predictions ---
     for match, data in predictions.items():
+        # Re-check limit inside loop
+        if not dry_run and stats.get("monthly_posts_count", 0) >= post_limit:
+            print("Monthly limit hit mid-batch. Stopping.")
+            break
+
         home = data['home']
         away = data['away']
         winner = data['winner']
@@ -185,26 +259,39 @@ def post_predictions(predictions, dry_run=False):
         det = data['detailed']
         heading = data['heading']
 
-        # Multi-market layout for "Musk-style" professionalism
         tweet_text = (
             f"{heading}\n"
             f"⚽ {home} vs {away}\n\n"
             f"🔮 Logic: {det['main']}\n"
             f"🛡️ Win/Draw: {det['dc']}\n"
-            f"💎 GG/NG: {gg} | O/U: {ou}\n"
-            f"📐 Corners: {det['corners']}\n"
+            f"💎 Goal Forecast: {det['ou_refined']}\n"
+            f"🌟 Star Power: {det['star_power']}\n"
             f"⏱️ HT Result: {det['ht']}\n\n"
             f"💡 Outcome: {winner} ({conf})\n"
-            f"📣 {advice}{shoutout}\n\n"
-            f"NorraAI Football Predictions"
+            f"📣 {advice}\n\n"
+            f"NorraAI Prediction Beacon Force"
         )
         
         try:
             if dry_run:
                 print(f"\n[DRY RUN TWEET for {match}]:\n{tweet_text}")
             else:
-                api.update_status(tweet_text)
-                print(f"Prediction posted: {match}")
+                if api:
+                    api.update_status(tweet_text)
+                    stats["monthly_posts_count"] = stats.get("monthly_posts_count", 0) + 1
+                    
+                    # --- Record Prediction for Verification ---
+                    # We store the fixture_id and our expected winner for tomorrow's verification
+                    if "predictions_to_verify" not in stats:
+                        stats["predictions_to_verify"] = {}
+                    
+                    # Store as: {fixture_id: predicted_winner_type}
+                    # winner_type: "Home", "Away", "Draw"
+                    winner_type = "Home" if winner == home else ("Away" if winner == away else "Draw")
+                    stats["predictions_to_verify"][str(data['fixture_id'])] = winner_type
+                    
+                    update_bot_stats(stats)
+                    print(f"Prediction posted: {match}")
         except Exception as e:
             print(f"Failed to post prediction for {match}: {e}")
 
@@ -225,7 +312,7 @@ def verify_previous_matches(api_key):
     import datetime
     import json
     import os
-    from football_api import get_fixtures_by_date
+    from football_api import get_fixture_by_id
 
     stats_file = "bot_stats.json"
     stats = {}
@@ -233,62 +320,63 @@ def verify_previous_matches(api_key):
         try:
             with open(stats_file, "r") as f:
                 stats = json.load(f)
-        except json.JSONDecodeError:
-            print("Error reading bot_stats.json, starting with empty stats.")
-            stats = {}
-    
-    # Initialize stats if empty or missing keys
+        except:
+            return
+
+    # Initialize keys
+    stats.setdefault('predictions_to_verify', {})
+    stats.setdefault('weekly_wins', 0)
     stats.setdefault('verified_ids', [])
-    stats.setdefault('total_predictions', 0)
-    stats.setdefault('total_wins', 0)
-    stats.setdefault('total_losses', 0)
-    stats.setdefault('weekly_wins', 0) # Reset weekly wins if needed, or manage sliding window
 
-    yesterday = datetime.datetime.now().date() - datetime.timedelta(days=1)
-    yesterday_str = yesterday.strftime("%Y-%m-%d")
-    print(f"Verifying matches for {yesterday_str}...")
-
-    # Fetch all fixtures for yesterday
-    yesterday_fixtures = get_fixtures_by_date(yesterday_str, api_key)
-    
-    if not yesterday_fixtures:
-        print(f"No fixtures found for {yesterday_str} to verify.")
+    if not stats['predictions_to_verify']:
+        print("No pending predictions to verify.")
         return
 
-    wins_today = 0
-    losses_today = 0
-    verified_count = 0
-
-    for f in yesterday_fixtures:
-        fid = f['fixture']['id']
-        # For now, we assume any match that was predicted would have its ID in verified_ids
-        # In a real system, we'd store the actual prediction and compare.
-        if fid in stats['verified_ids']: # This is a placeholder, needs actual prediction storage
-            if f['fixture']['status']['short'] == 'FT': # Only verify finished matches
-                home_g = f['goals']['home']
-                away_g = f['goals']['away']
-
-                # Mock verification: Assume a "Home" bias prediction for simplicity
-                # In a real system, this would compare against the stored prediction
-                if home_g > away_g: # If home won, and we "predicted" home
-                    wins_today += 1
-                    stats['total_wins'] += 1
-                else: # If home didn't win, and we "predicted" home
-                    losses_today += 1
-                    stats['total_losses'] += 1
-                
-                verified_count += 1
-                stats['total_predictions'] += 1
-                # Remove from verified_ids once processed to avoid re-processing
-                stats['verified_ids'].remove(fid) 
-            else:
-                print(f"Fixture {fid} not yet finished ({f['fixture']['status']['short']}), skipping verification.")
-
-    stats['weekly_wins'] = (stats.get('weekly_wins', 0) + wins_today) # Update weekly wins
+    print(f"\n--- Verifying {len(stats['predictions_to_verify'])} Pending Matches ---")
     
+    pending_ids = list(stats['predictions_to_verify'].keys())
+    wins_added = 0
+    total_checked = 0
+
+    for fid in pending_ids:
+        fixture = get_fixture_by_id(fid, api_key)
+        if not fixture: continue
+        
+        status = fixture['fixture']['status']['short']
+        if status == 'FT':
+            total_checked += 1
+            home_g = fixture['goals']['home']
+            away_g = fixture['goals']['away']
+            actual_winner = "Home" if home_g > away_g else ("Away" if away_g > home_g else "Draw")
+            
+            predicted_winner = stats['predictions_to_verify'][fid]
+            
+            if predicted_winner == actual_winner or (predicted_winner == "Draw" and home_g == away_g):
+                wins_added += 1
+                print(f"✅ Match {fid}: Correct! ({predicted_winner})")
+            else:
+                print(f"❌ Match {fid}: Incorrect. Predicted {predicted_winner}, Result {actual_winner}")
+            
+            # Move to historical verification log and remove from pending
+            stats['verified_ids'].append(fid)
+            del stats['predictions_to_verify'][fid]
+        else:
+            print(f"⏳ Match {fid}: Still pending ({status}).")
+
+    if total_checked > 0:
+        # Update weekly win streak (sliding window of 7 days would be complex, 
+        # using a simple increment for now)
+        stats['weekly_wins'] = stats.get('weekly_wins', 0) + wins_added
+        
+        # Reset weekly wins if more than a week passed (simplified)
+        last_reset = stats.get("last_weekly_reset", "")
+        today_str = datetime.datetime.now().strftime("%Y-%m-%d")
+        if last_reset != today_str and datetime.datetime.now().weekday() == 0: # Monday reset
+            stats["weekly_wins"] = wins_added # Reset to current week's wins
+            stats["last_weekly_reset"] = today_str
+
     update_bot_stats(stats)
-    print(f"Verification complete for {yesterday_str}: {wins_today} wins, {losses_today} losses out of {verified_count} predicted matches.")
-    print(f"Current overall record: {stats['total_wins']} wins, {stats['total_losses']} losses.")
+    print(f"Verification complete. Total Wins this week: {stats['weekly_wins']}/7 mission target.")
 
 
 if __name__ == "__main__":
