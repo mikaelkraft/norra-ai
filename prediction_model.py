@@ -21,20 +21,61 @@ ANALYTICAL_CACHE = {
     "stats": {}
 }
 
+TRAINING_DATA_FILE = "training_data.csv"
+
+def save_training_data(df):
+    """Saves the training dataframe to CSV."""
+    if df.empty: return
+    # If file exists, append without header; else create new
+    header = not os.path.exists(TRAINING_DATA_FILE)
+    df.to_csv(TRAINING_DATA_FILE, mode='a', index=False, header=header)
+    print(f"Appended {len(df)} samples to {TRAINING_DATA_FILE}")
+
+def load_training_data():
+    """Loads existing training data from CSV."""
+    if not os.path.exists(TRAINING_DATA_FILE):
+        return pd.DataFrame()
+    try:
+        df = pd.read_csv(TRAINING_DATA_FILE)
+        # Drop duplicates based on home/away/date if we had date, 
+        # but for now just unique ID pairs in the set
+        return df
+    except:
+        return pd.DataFrame()
+
 def fetch_training_data(api_key, league_ids):
     """
-    Fetches historical fixtures for training the model.
+    Incremental Fetcher: Only fetches data for leagues with limited representation 
+    in the existing CSV to save API quota.
     """
+    existing_df = load_training_data()
     all_data = []
-    print(f"Fetching historical training data for {len(league_ids)} leagues...")
+    
+    # Calculate how many samples we have per league
+    league_counts = {}
+    if not existing_df.empty:
+        league_counts = existing_df.get('league_id', pd.Series()).value_counts().to_dict()
+
+    print(f"Auditing wholesome training depth for {len(league_ids)} leagues...")
     for league_id in league_ids:
-        # Fetch last 30 matches for each league to build a dataset
-        fixtures_data = get_fixtures(api_key, league_id=league_id, last_n=30)
+        # Target: at least 50 high-quality samples per league for a "Beacon Force"
+        current_count = league_counts.get(league_id, 0)
+        if current_count >= 50:
+            print(f"League {league_id} has sufficient depth ({current_count} samples). Skipping fetch.")
+            continue
+            
+        print(f"Fetching fresh training context for League {league_id} (Current: {current_count})...")
+        # Fetch last 40 matches (staggered to avoid 403)
+        fixtures_data = get_fixtures(api_key, league_id=league_id, last_n=40)
         if fixtures_data:
             league_data = process_fixtures_data(fixtures_data, api_key)
-            all_data.extend(league_data)
+            if league_data:
+                all_data.extend(league_data)
+                # Save incrementally
+                save_training_data(pd.DataFrame(league_data))
     
-    return pd.DataFrame(all_data)
+    # Reload full wholesome dataset
+    return load_training_data()
 
 def process_fixtures_data(fixtures_data, api_key):
     processed_data = []
@@ -76,13 +117,27 @@ def process_fixtures_data(fixtures_data, api_key):
             ranks = standings_cache[cache_key]
             home_rank = ranks.get(home_id, 10) # Default mid-table
             away_rank = ranks.get(away_id, 10)
+            total_teams = len(ranks) or 20
+
+            # Feature Expansion for "Wholesome" Training
+            home_motivation = calculate_league_motivation(home_rank, total_teams)
+            away_motivation = calculate_league_motivation(away_rank, total_teams)
+            
+            # Using conservative defaults for historical stars/defense to speed up trainer
+            home_star = calculate_player_star_power(home_id, league_id, season, api_key)
+            home_def = calculate_defensive_wall(home_id, league_id, season, api_key)
+            h2h_skip = calculate_deep_h2h_dominance(home_id, away_id, api_key)
 
             # Features
             data_point = {
-                "home_id": home_id,
-                "away_id": away_id,
+                "league_id": league_id,
                 "home_rank": home_rank,
                 "away_rank": away_rank,
+                "home_motivation": home_motivation,
+                "away_motivation": away_motivation,
+                "home_star_power": home_star,
+                "home_defensive_wall": home_def,
+                "h2h_dominance": h2h_skip,
                 "home_advantage": 1,
                 "result": result
             }
@@ -355,10 +410,14 @@ def get_match_prediction(fixture, api_key, model=None):
 
         if model:
             features = pd.DataFrame([{
-                "home_id": home_id,
-                "away_id": away_id,
-                "home_rank": home_rank, 
+                "league_id": league_id,
+                "home_rank": home_rank,
                 "away_rank": away_rank,
+                "home_motivation": home_motivation,
+                "away_motivation": away_motivation,
+                "home_star_power": home_star_power,
+                "home_defensive_wall": home_def_wall,
+                "h2h_dominance": h2h_dominance,
                 "home_advantage": 1
             }])
             ml_pred = model.predict(features)[0]

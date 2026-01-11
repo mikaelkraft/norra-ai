@@ -68,11 +68,11 @@ def fetch_predictions(api_key=None, dry_run=False):
         api_key = os.getenv("RAPIDAPI_KEY")
     current_date = datetime.datetime.now().date()
 
-    # Optimized ML Training (Historical)
+    # Wholesome ML Training (Persistent & Incremental)
     try:
         from prediction_model import fetch_training_data, train_model
-        # Use a few key leagues for training context
-        training_leagues = [39, 140, 78, 135] # EPL, La Liga, Bundesliga, Serie A
+        # Use all global leagues for training context (saved locally in training_data.csv)
+        training_leagues = [l["league_id"] for l in leagues]
         train_df = fetch_training_data(api_key, training_leagues)
         model = train_model(train_df)
     except Exception as e:
