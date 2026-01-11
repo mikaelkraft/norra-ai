@@ -9,6 +9,10 @@ load_dotenv()
 import numpy as np
 import tweepy
 from football_api import get_fixtures
+import database
+from database import SessionLocal, Prediction
+import telegram_bot
+import json
 
 
 # API_football Actual API credentials and league ID
@@ -292,8 +296,77 @@ def post_predictions(predictions, dry_run=False):
                     
                     update_bot_stats(stats)
                     print(f"Prediction posted: {match}")
+
+                # --- Sync to Ecosystem Database (Persistent) ---
+                db = SessionLocal()
+                try:
+                    # Check if fixture already exists to avoid duplicates
+                    existing = db.query(Prediction).filter(Prediction.fixture_id == data['fixture_id']).first()
+                    if not existing:
+                        new_pred = Prediction(
+                            fixture_id=data['fixture_id'],
+                            home_team=home,
+                            away_team=away,
+                            league_name=data.get('league_name', 'Global League'),
+                            prediction_main=winner,
+                            confidence=conf,
+                            dc=det['dc'],
+                            ht=det['ht'],
+                            ou_refined=det['ou_refined'],
+                            star_power=det['star_power'],
+                            h2h_dom=det['h2h_dom']
+                        )
+                        db.add(new_pred)
+                        db.commit()
+                        print(f"Prediction synced to database: {match}")
+                except Exception as e:
+                    print(f"Database sync failed for {match}: {e}")
+                finally:
+                    db.close()
+
         except Exception as e:
-            print(f"Failed to post prediction for {match}: {e}")
+            print(f"Failed to post/sync prediction for {match}: {e}")
+
+    # --- Eco-System Broadcast (Telegram) ---
+    # After all predictions are posted/synced, broadcast the daily picks to Telegram
+    if not dry_run:
+        try:
+            telegram_bot.broadcast_predictions()
+        except Exception as e:
+            print(f"Telegram broadcast trigger failed: {e}")
+
+    # --- GitHub Pages Sync (Serverless) ---
+    # Export predictions to a flat JSON file for hosting on GitHub Pages
+    save_predictions_to_json(predictions)
+
+def save_predictions_to_json(predictions):
+    """Saves predictions to a flat JSON file for GitHub Pages."""
+    output_file = "predictions.json"
+    
+    formatted_preds = []
+    for match, data in predictions.items():
+        det = data['detailed']
+        formatted_preds.append({
+            "fixture_id": data['fixture_id'],
+            "home": data['home'],
+            "away": data['away'],
+            "league": data.get('league_name', 'Global League'),
+            "main": data['winner'],
+            "conf": data['confidence'],
+            "dc": det['dc'],
+            "ht": det['ht'],
+            "ou": det['ou_refined'],
+            "stars": det['star_power'],
+            "h2h": det['h2h_dom'],
+            "date": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        })
+    
+    try:
+        with open(output_file, "w") as f:
+            json.dump(formatted_preds, f, indent=4)
+        print(f"Predictions exported to {output_file} for GitHub Pages.")
+    except Exception as e:
+        print(f"Failed to export JSON for GitHub Pages: {e}")
 
 def update_bot_stats(stats):
     """Helper to save bot statistics to file."""
