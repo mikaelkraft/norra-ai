@@ -52,8 +52,18 @@ async function fetchPredictions() {
     }
 }
 
+function setDynamicYear() {
+    const yearSpan = document.getElementById('current-year');
+    if (yearSpan) {
+        yearSpan.textContent = new Date().getFullYear();
+    }
+}
+
 // Fetch on load
-document.addEventListener('DOMContentLoaded', fetchPredictions);
+document.addEventListener('DOMContentLoaded', () => {
+    fetchPredictions();
+    setDynamicYear();
+});
 
 // Refresh every 5 minutes
 setInterval(fetchPredictions, 300000);
