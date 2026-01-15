@@ -68,8 +68,9 @@ def run_historical_fetch():
             print(f"Failed to fetch historical data for League ID {league_id}.")
 
 def fetch_predictions(api_key=None, dry_run=False):
-    if api_key is None:
-        api_key = os.getenv("RAPIDAPI_KEY")
+    # Authenticate with direct Football API (API-Sports)
+    api_key = os.getenv("RAPIDAPI_KEY") 
+    print(f"Connecting to API-Sports...")
     current_date = datetime.datetime.now().date()
 
     # Wholesome ML Training (Persistent & Incremental)

@@ -9,11 +9,10 @@ import numpy as np
 
 
 def fetch_team_data(api_key, league_id):
-    url = "https://api-football-v1.p.rapidapi.com/v3/teams"
+    url = "https://v3.football.api-sports.io/teams"
     querystring = {"league": league_id}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
 
@@ -123,10 +122,9 @@ def get_prioritized_fixtures(date, api_key):
         return []
 
 def get_leagues(api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/leagues"
+    url = "https://v3.football.api-sports.io/leagues"
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers)
 
@@ -137,7 +135,7 @@ def get_leagues(api_key):
         return None
 
 def get_fixtures(api_key, league_id=None, season=None, date=None, team_id=None, next_n=None, last_n=None):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+    url = "https://v3.football.api-sports.io/fixtures"
     querystring = {}
     if league_id: querystring["league"] = str(league_id)
     if season: querystring["season"] = str(season)
@@ -150,8 +148,7 @@ def get_fixtures(api_key, league_id=None, season=None, date=None, team_id=None, 
         querystring["current"] = "true"
 
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
 
@@ -164,7 +161,7 @@ def get_fixtures(api_key, league_id=None, season=None, date=None, team_id=None, 
 
 # Function to retrieve team statistics for a specific team in a league and season
 def get_team_statistics(league_id, season, team_id, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/teams/statistics"
+    url = "https://v3.football.api-sports.io/teams/statistics"
 
     querystring = {
         "league": str(league_id),
@@ -173,8 +170,7 @@ def get_team_statistics(league_id, season, team_id, api_key):
     }
 
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
 
     response = requests.get(url, headers=headers, params=querystring)
@@ -188,7 +184,7 @@ def get_team_statistics(league_id, season, team_id, api_key):
 
 # Function to retrieve player statistics for a specific team in a league and season
 def get_player_statistics(league_id, season, team_id, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/players"
+    url = "https://v3.football.api-sports.io/players"
 
     querystring = {
         "league": str(league_id),
@@ -197,8 +193,7 @@ def get_player_statistics(league_id, season, team_id, api_key):
     }
 
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
 
     response = requests.get(url, headers=headers, params=querystring)
@@ -212,7 +207,7 @@ def get_player_statistics(league_id, season, team_id, api_key):
     
     # Function to retrieve head-to-head statistics for specific teams in a league
 def get_head_to_head_statistics(league_id, team_id1, team_id2, last_matches, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead"
+    url = "https://v3.football.api-sports.io/fixtures/headtohead"
 
     querystring = {
         "h2h": f"{team_id1}-{team_id2}",
@@ -221,8 +216,7 @@ def get_head_to_head_statistics(league_id, team_id1, team_id2, last_matches, api
     }
 
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
 
     response = requests.get(url, headers=headers, params=querystring)
@@ -236,7 +230,7 @@ def get_head_to_head_statistics(league_id, team_id1, team_id2, last_matches, api
 
 # Function to retrieve injuries for a specific team in a league and season
 def get_team_injuries(league_id, season, team_id, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/injuries"
+    url = "https://v3.football.api-sports.io/injuries"
 
     querystring = {
         "league": str(league_id),
@@ -245,8 +239,7 @@ def get_team_injuries(league_id, season, team_id, api_key):
     }
 
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
 
     response = requests.get(url, headers=headers, params=querystring)
@@ -260,7 +253,7 @@ def get_team_injuries(league_id, season, team_id, api_key):
 
 # Function to retrieve team standings in a league and season
 def get_team_standings(league_id, season, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/standings"
+    url = "https://v3.football.api-sports.io/standings"
 
     querystring = {
         "league": str(league_id),
@@ -268,8 +261,7 @@ def get_team_standings(league_id, season, api_key):
     }
 
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
 
     response = requests.get(url, headers=headers, params=querystring)
@@ -311,11 +303,10 @@ def generate_predictions(fixtures_data):
 
 # Function to retrieve lineups for a specific fixture
 def get_lineups(fixture_id, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/lineups"
-    querystring = {"fixture": str(fixture_id)}
+    url = "https://v3.football.api-sports.io/fixtures/lineups"
+    querystring = {"fixture": fixture_id}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
@@ -326,11 +317,10 @@ def get_lineups(fixture_id, api_key):
 
 # Function to retrieve statistics for a specific fixture
 def get_fixture_statistics(fixture_id, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/statistics"
-    querystring = {"fixture": str(fixture_id)}
+    url = "https://v3.football.api-sports.io/fixtures/statistics"
+    querystring = {"fixture": fixture_id}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
@@ -341,11 +331,10 @@ def get_fixture_statistics(fixture_id, api_key):
 
 # Function to retrieve a single fixture by ID (to check results)
 def get_fixture_by_id(fixture_id, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
-    querystring = {"id": str(fixture_id)}
+    url = "https://v3.football.api-sports.io/fixtures"
+    querystring = {"id": fixture_id}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
@@ -357,11 +346,10 @@ def get_fixture_by_id(fixture_id, api_key):
 
 # Function to retrieve predictions for a specific fixture
 def get_predictions(fixture_id, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/predictions"
-    querystring = {"fixture": str(fixture_id)}
+    url = "https://v3.football.api-sports.io/predictions"
+    querystring = {"fixture": fixture_id}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
@@ -372,11 +360,10 @@ def get_predictions(fixture_id, api_key):
 
 # Function to retrieve odds for a specific fixture
 def get_odds(fixture_id, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/odds"
-    querystring = {"fixture": str(fixture_id)}
+    url = "https://v3.football.api-sports.io/odds"
+    querystring = {"fixture": fixture_id}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
@@ -387,11 +374,10 @@ def get_odds(fixture_id, api_key):
 
 # Function to retrieve all fixtures for a specific date
 def get_fixtures_by_date(date_str, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+    url = "https://v3.football.api-sports.io/fixtures"
     querystring = {"date": date_str}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
@@ -402,11 +388,10 @@ def get_fixtures_by_date(date_str, api_key):
 
 # Function to retrieve top scorers for a league/season
 def get_top_scorers(league_id, season, api_key):
-    url = "https://api-football-v1.p.rapidapi.com/v3/players/topscorers"
-    querystring = {"league": str(league_id), "season": str(season)}
+    url = "https://v3.football.api-sports.io/players/topscorers"
+    querystring = {"league": league_id, "season": season}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:
@@ -417,11 +402,10 @@ def get_top_scorers(league_id, season, api_key):
 
 # Function to retrieve Extended H2H (Multi-Season)
 def get_extended_h2h(home_id, away_id, api_key, last_n=10):
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures/headtohead"
-    querystring = {"h2h": f"{home_id}-{away_id}", "last": str(last_n)}
+    url = "https://v3.football.api-sports.io/fixtures/headtohead"
+    querystring = {"h2h": f"{home_id}-{away_id}", "last": last_n}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     response = requests.get(url, headers=headers, params=querystring)
     if response.status_code == 200:

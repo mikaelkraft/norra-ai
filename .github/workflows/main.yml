@@ -26,7 +26,6 @@ jobs:
     - name: Run Norra AI Prediction Cycle
       env:
         RAPIDAPI_KEY: ${{ secrets.RAPIDAPI_KEY }}
-        RAPIDAPI_HOST: ${{ secrets.RAPIDAPI_HOST }}
         X_CONSUMER_KEY: ${{ secrets.X_CONSUMER_KEY }}
         X_CONSUMER_SECRET: ${{ secrets.X_CONSUMER_SECRET }}
         X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
