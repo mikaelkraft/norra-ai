@@ -28,7 +28,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-api_key = os.getenv("RAPIDAPI_KEY")
+api_key = os.getenv("FOOTBALL_API_KEY")
 
 # League Tiers (Expanded for 365-day coverage)
 TIER_1_LEAGUES = [

@@ -4,7 +4,7 @@ from prediction_model import fetch_training_data, train_model, TRAINING_DATA_FIL
 from dotenv import load_dotenv
 
 load_dotenv()
-api_key = os.getenv("RAPIDAPI_KEY")
+api_key = os.getenv("FOOTBALL_API_KEY")
 
 def verify_wholesome_persistence():
     print("--- Wholesome Persistence Verification ---")

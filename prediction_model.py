@@ -483,7 +483,7 @@ def make_predictions(model, fixtures, api_key):
     return predictions
 
 def main():
-    api_key = os.getenv("RAPIDAPI_KEY")
+    api_key = api_key or os.getenv("FOOTBALL_API_KEY")
     current_date = datetime.datetime.now().date()
     
     # 1. Fetch training data (Historical)

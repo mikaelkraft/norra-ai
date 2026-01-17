@@ -69,7 +69,7 @@ def run_historical_fetch():
 
 def fetch_predictions(api_key=None, dry_run=False):
     # Authenticate with direct Football API (API-Sports)
-    api_key = os.getenv("RAPIDAPI_KEY") 
+    api_key = os.getenv("FOOTBALL_API_KEY") 
     print(f"Connecting to API-Sports...")
     current_date = datetime.datetime.now().date()
 
