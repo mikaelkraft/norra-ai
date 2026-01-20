@@ -413,6 +413,20 @@ def get_extended_h2h(home_id, away_id, api_key, last_n=10):
         print(f"Failed to retrieve extended H2H. Status code: {response.status_code}")
         return []
 
+# Function to retrieve Coach/Manager history for a team
+def get_coach_history(team_id, api_key):
+    url = "https://v3.football.api-sports.io/coachs"
+    querystring = {"team": team_id}
+    headers = {
+        "x-apisports-key": api_key
+    }
+    response = requests.get(url, headers=headers, params=querystring)
+    if response.status_code == 200:
+        return response.json().get("response", [])
+    else:
+        print(f"Failed to retrieve coach history. Status code: {response.status_code}")
+        return []
+
 if __name__ == "__main__":
     # Example usage
     current_date = datetime.datetime.now().date()  # Replace with the actual date
