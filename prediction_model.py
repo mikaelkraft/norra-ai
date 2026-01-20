@@ -610,16 +610,14 @@ def get_match_prediction(fixture, api_key, model=None):
     home_score = home_form + 10 + (sentiment if sentiment > 0 else 0) + weather_impact
     away_score = away_form + (abs(sentiment) if sentiment < 0 else 0)
     
-    # ML Model Prediction (if available)
-    ml_outcome = "No ML context"
-    home_motivation, away_motivation = 0, 0
-    home_star_power, away_star_power = 0, 0
-    home_def_wall, away_def_wall = 10, 10
-    h2h_dominance = calculate_deep_h2h_dominance(home_id, away_id, api_key)
-    
     # Integration of V4 Factors into Final Scores
     home_score += (poisson_boost if poisson_boost > 0 else 0) + home_stability + derby_home_boost
     away_score += (abs(poisson_boost) if poisson_boost < 0 else 0) + away_stability + derby_away_boost
+    
+    ml_outcome = "Beacon ML Analyzed"
+    home_motivation, away_motivation = 0, 0
+    home_star_power, away_star_power = 0, 0
+    home_def_wall, away_def_wall = 10, 10
     
     if model or True: # Always fetch standings and stars for motivation logic now
         # ... (standings logic remains same, just ensuring variables exist) ...

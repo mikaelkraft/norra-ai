@@ -151,6 +151,7 @@ def generate_predictions(fixtures, api_key, model=None):
         result_key = f"{home_team} vs {away_team}"
         predictions[result_key] = {
             "fixture_id": fixture_id,
+            "league_name": league_name,
             "winner": winner,
             "confidence": conf,
             "advice": advice,
