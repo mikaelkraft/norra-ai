@@ -40,6 +40,6 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add predictions.json bot_stats.json training_data.csv
+        git add predictions.json bot_stats.json training_data.csv norra_ai.db
         git commit -m "Automated prediction update [skip ci]" || echo "No changes to commit"
         git push

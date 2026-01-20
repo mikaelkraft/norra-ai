@@ -84,11 +84,10 @@ def get_prioritized_fixtures(date, api_key):
     date_str = date.strftime("%Y-%m-%d")
     print(f"Fetching global fixtures for {date_str}...")
     
-    url = "https://api-football-v1.p.rapidapi.com/v3/fixtures"
+    url = "https://v3.football.api-sports.io/fixtures"
     querystring = {"date": date_str}
     headers = {
-        "X-RapidAPI-Key": api_key,
-        "X-RapidAPI-Host": "api-football-v1.p.rapidapi.com"
+        "x-apisports-key": api_key
     }
     
     try:
