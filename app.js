@@ -63,11 +63,12 @@ function renderGrid() {
 
         card.innerHTML = `
             <div class="card-header">
+                <span class="card-tier">Beacon V4</span>
                 <span>${p.league}</span>
-                <span>${p.fixture_id}</span>
             </div>
-            <div class="teams">${p.home} <span>VS</span> ${p.away}</div>
-            
+            <div class="teams">
+                ${p.home} <span>VS</span> ${p.away}
+            </div>
             <div class="confidence-gauge-container">
                 <div class="gauge-label">
                     <span>Precision Level</span>
