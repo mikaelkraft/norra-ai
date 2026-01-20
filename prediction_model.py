@@ -319,6 +319,38 @@ def calculate_fatigue_index(team_id, api_key):
         
     return 0
 
+def calculate_injury_impact(team_id, league_id, season, api_key):
+    """
+    Checks for injuries and suspensions.
+    Returns a penalty score based on the depth of the injury list.
+    """
+    cache_key = (league_id, season, team_id)
+    if cache_key in ANALYTICAL_CACHE.get("injuries", {}):
+        injuries_raw = ANALYTICAL_CACHE["injuries"][cache_key]
+    else:
+        from football_api import get_team_injuries
+        injuries_raw = get_team_injuries(league_id, season, team_id, api_key)
+        if "injuries" not in ANALYTICAL_CACHE: ANALYTICAL_CACHE["injuries"] = {}
+        ANALYTICAL_CACHE["injuries"][cache_key] = injuries_raw
+
+    if not injuries_raw: return 0
+    
+    # Count players out
+    inj_list = injuries_raw.get('response', [])
+    count = len(inj_list)
+    
+    # Penalty: -3 per key player, max -15
+    return max(count * -3, -15)
+
+def calculate_boogeyman_score(home_id, away_id, h2h_dominance):
+    """
+    Identifies 'Boogeyman' teams - historical dominance that defies logic.
+    If H2H dominance is extremely high (>12) regardless of form, it's a boogeyman.
+    """
+    if h2h_dominance >= 12: return 10 # Home is Boogeyman to Away
+    if h2h_dominance <= -12: return -10 # Away is Boogeyman to Home
+    return 0
+
 def calculate_manager_bounce(team_id, api_key):
     """
     Detects if a team has a new manager (appointed in the last ~30 days).
@@ -393,7 +425,48 @@ def calculate_defensive_wall(team_id, league_id, season, api_key):
     ratio = (clean_sheets / games_played) * 20
     return min(ratio, 20)
 
-    return min(ratio, 20)
+def calculate_lineup_stability(team_id, api_key):
+    """
+    Compares the last 2 match lineups for squad consistency.
+    """
+    from football_api import get_fixtures, get_lineups
+    
+    # 1. Get last 2 fixtures
+    last_fixtures = get_fixtures(api_key, team_id=team_id, last_n=2)
+    if len(last_fixtures) < 2: return 0
+    
+    try:
+        f1_id = last_fixtures[0]['fixture']['id']
+        f2_id = last_fixtures[1]['fixture']['id']
+        
+        # 2. Get lineups
+        l1 = get_lineups(f1_id, api_key)
+        l2 = get_lineups(f2_id, api_key)
+        
+        if not l1 or not l2: return 0
+        
+        # Extract starters
+        s1 = []
+        for entry in l1:
+            if entry.get('team', {}).get('id') == team_id:
+                s1 = [p['player']['id'] for p in entry.get('startXI', [])]
+                break
+        s2 = []
+        for entry in l2:
+            if entry.get('team', {}).get('id') == team_id:
+                s2 = [p['player']['id'] for p in entry.get('startXI', [])]
+                break
+                
+        if not s1 or not s2: return 0
+        
+        common = set(s1).intersection(set(s2))
+        stability = len(common) / 11
+        
+        if stability >= 0.8: return 10 # Solid chemistry
+        if stability <= 0.5: return -6 # Heavy rotation penalty
+    except:
+        pass
+    return 0
 
 def calculate_referee_impact(referee_name):
     """
@@ -424,6 +497,54 @@ def calculate_travel_stress(league_id, is_away):
         return -12 # High travel stress
     return -5 # Standard domestic travel stress
 
+def calculate_poisson_score(fixture_id, api_key):
+    """
+    Leverages API-Sports mathematical modeling.
+    Returns a score comparison (-15 to 15).
+    """
+    from football_api import get_predictions
+    preds = get_predictions(fixture_id, api_key)
+    if not preds: return 0
+    
+    try:
+        comparison = preds[0].get('comparison', {})
+        # Comparison scores are percentages (e.g. 50% vs 50%)
+        # We look specifically at the 'total' or 'poisson' if available
+        home_cm = float(comparison.get('total', {}).get('home', '50%').replace('%',''))
+        away_cm = float(comparison.get('total', {}).get('away', '50%').replace('%',''))
+        
+        diff = home_cm - away_cm
+        return (diff / 100) * 15 # Normalize to our scoring range
+    except:
+        return 0
+
+def calculate_derby_coefficient(fixture):
+    """
+    Detects local derbies or high-rivalry matches.
+    """
+    home_name = fixture['teams']['home']['name']
+    away_name = fixture['teams']['away']['name']
+    
+    # Heuristic: Common city names or historical pairs
+    derby_pairs = [
+        ("Arsenal", "Tottenham"), ("Manchester City", "Manchester United"),
+        ("Liverpool", "Everton"), ("Real Madrid", "Atletico Madrid"),
+        ("Inter", "Milan"), ("Lazio", "Roma"), ("Celtic", "Rangers"),
+        ("Benfica", "Sporting")
+    ]
+    
+    for p1, p2 in derby_pairs:
+        if (p1 in home_name and p2 in away_name) or (p1 in away_name and p2 in home_name):
+            return True
+            
+    # City matching (e.g. "Madrid", "London" - though London has too many)
+    cities = ["Madrid", "Manchester", "Liverpool", "Milan", "Roma", "Glasgow", "Lisbon", "Sevilla"]
+    for city in cities:
+        if city in home_name and city in away_name:
+            return True
+            
+    return False
+
 def get_match_prediction(fixture, api_key, model=None):
     """
     Calculates a prediction based on form, H2H, venue, Market Sentiment, and ML Model.
@@ -436,10 +557,27 @@ def get_match_prediction(fixture, api_key, model=None):
     # Venue / Home Advantage
     is_home = True # Current fixture home data
     
+    # Weather Severity Analysis
+    weather = fixture.get('fixture', {}).get('weather', {}).get('description', 'clear sky')
+    temp = fixture.get('fixture', {}).get('weather', {}).get('temp') 
+    weather_impact = 0
+    if "rain" in weather.lower() or "snow" in weather.lower():
+        weather_impact = -8 # Stronger penalty for bad weather
+    if temp and (temp < 0 or temp > 35): # Extreme temps
+        weather_impact -= 5
+        
     home_form = calculate_team_form(home_id, league_id, api_key)
     away_form = calculate_team_form(away_id, league_id, api_key)
     
-    # --- Beacon V3: Advanced Performance Factors ---
+    season = fixture['league'].get('season', 2025)
+    
+    # --- Beacon V3.1: Total Awareness Factors ---
+    home_injuries = calculate_injury_impact(home_id, league_id, season, api_key)
+    away_injuries = calculate_injury_impact(away_id, league_id, season, api_key)
+    
+    h2h_dominance = calculate_deep_h2h_dominance(home_id, away_id, api_key)
+    boogeyman_effect = calculate_boogeyman_score(home_id, away_id, h2h_dominance)
+    
     home_fatigue = calculate_fatigue_index(home_id, api_key)
     away_fatigue = calculate_fatigue_index(away_id, api_key)
     
@@ -457,6 +595,17 @@ def get_match_prediction(fixture, api_key, model=None):
     # Market Sentiment Booster
     sentiment = get_market_sentiment(fixture_id, api_key)
     
+    # --- Beacon V4: Omniscience Upgrade ---
+    poisson_boost = calculate_poisson_score(fixture_id, api_key)
+    derby_active = calculate_derby_coefficient(fixture)
+    
+    home_stability = calculate_lineup_stability(home_id, api_key)
+    away_stability = calculate_lineup_stability(away_id, api_key)
+    
+    # Derby Neutralizer: Boost the underdog form if it's a derby
+    derby_home_boost = 10 if (derby_active and home_form < away_form) else 0
+    derby_away_boost = 10 if (derby_active and away_form < home_form) else 0
+    
     # Rule-Engine Score (Baseline V2)
     home_score = home_form + 10 + (sentiment if sentiment > 0 else 0) + weather_impact
     away_score = away_form + (abs(sentiment) if sentiment < 0 else 0)
@@ -468,7 +617,9 @@ def get_match_prediction(fixture, api_key, model=None):
     home_def_wall, away_def_wall = 10, 10
     h2h_dominance = calculate_deep_h2h_dominance(home_id, away_id, api_key)
     
-    season = fixture['league'].get('season', 2025)
+    # Integration of V4 Factors into Final Scores
+    home_score += (poisson_boost if poisson_boost > 0 else 0) + home_stability + derby_home_boost
+    away_score += (abs(poisson_boost) if poisson_boost < 0 else 0) + away_stability + derby_away_boost
     
     if model or True: # Always fetch standings and stars for motivation logic now
         # ... (standings logic remains same, just ensuring variables exist) ...
@@ -510,18 +661,17 @@ def get_match_prediction(fixture, api_key, model=None):
     except:
         pass
 
-    # Final Beacon V3 Score Accumulation
-    home_score += (home_motivation + home_star_power + (h2h_dominance if h2h_dominance > 0 else 0))
-    away_score += (away_motivation + away_star_power + (abs(h2h_dominance) if h2h_dominance < 0 else 0))
+    # Final Beacon V4 Omniscience Score Accumulation
+    home_score += (home_motivation + home_star_power + (h2h_dominance if h2h_dominance > 0 else 0) + home_injuries + (boogeyman_effect if boogeyman_effect > 0 else 0))
+    away_score += (away_motivation + away_star_power + (abs(h2h_dominance) if h2h_dominance < 0 else 0) + away_injuries + (abs(boogeyman_effect) if boogeyman_effect < 0 else 0))
     
-    # ... (ML logic remains same) ...
+    # Multi-Variable Outcome Calibration
+    win_threshold = 20 # Omniscience requires higher conviction
+    if home_score > away_score + win_threshold: outcome = f"{fixture['teams']['home']['name']} Win"
+    elif away_score > home_score + win_threshold: outcome = f"{fixture['teams']['away']['name']} Win"
+    else: outcome = "Draw / Very Close"
 
-    # Final Outcomes
-    if home_score > away_score + 18: outcome = f"{fixture['teams']['home']['name']} Win"
-    elif away_score > home_score + 18: outcome = f"{fixture['teams']['away']['name']} Win"
-    else: outcome = "Draw / Close Match"
-
-    ht_result = get_halftime_prediction(home_form + home_bounce, away_form + away_bounce)
+    ht_result = get_halftime_prediction(home_form + home_bounce + (home_stability/2), away_form + away_bounce + (away_stability/2))
     
     ref_name = fixture.get('fixture', {}).get('referee')
     card_risk = calculate_referee_impact(ref_name)
@@ -534,13 +684,11 @@ def get_match_prediction(fixture, api_key, model=None):
         "ml": ml_outcome,
         "ou_refined": "Over 2.5" if (home_def_wall + away_def_wall < 15) else "Under 2.5",
         "star_power": f"H:{home_star_power} A:{away_star_power}",
-        "h2h_dom": h2h_dominance,
-        "card_risk": card_risk,
-        "v3_factors": {
-            "fatigue": f"H:{home_fatigue} A:{away_fatigue}",
-            "bounce": f"H:{home_bounce} A:{away_bounce}",
-            "travel": f"H:{home_travel} A:{away_travel}",
-            "surface": away_turf_impact
+        "v4_omniscience": {
+            "poisson": f"{poisson_boost:.1f}",
+            "derby": "YES" if derby_active else "No",
+            "stability": f"H:{home_stability} A:{away_stability}",
+            "injuries": f"H:{home_injuries} A:{away_injuries}"
         }
     }
 
