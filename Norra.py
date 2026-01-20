@@ -16,7 +16,7 @@ import json
 
 
 # API_football Actual API credentials and league ID
-api_key = os.getenv("RAPIDAPI_KEY")
+api_key = os.getenv("FOOTBALL_API_KEY")
 # List of leagues with their IDs (updated for 2025/26 seasons)
 leagues = [
     # Tier 1 & Major Internationals
@@ -343,6 +343,7 @@ def post_predictions(predictions, dry_run=False):
 def save_predictions_to_json(predictions):
     """Saves predictions to a flat JSON file for GitHub Pages."""
     output_file = "predictions.json"
+    last_updated = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     
     formatted_preds = []
     for match, data in predictions.items():
@@ -363,9 +364,13 @@ def save_predictions_to_json(predictions):
         })
     
     try:
+        data_to_save = {
+            "last_updated": last_updated,
+            "predictions": formatted_preds
+        }
         with open(output_file, "w") as f:
-            json.dump(formatted_preds, f, indent=4)
-        print(f"Predictions exported to {output_file} for GitHub Pages.")
+            json.dump(data_to_save, f, indent=4)
+        print(f"Predictions exported with metadata to {output_file}.")
     except Exception as e:
         print(f"Failed to export JSON for GitHub Pages: {e}")
 
@@ -465,13 +470,16 @@ if __name__ == "__main__":
     
     print(f"--- Norra AI Start Sequence (Dry Run: {dry_run}) ---")
     
-    api_key = os.getenv("RAPIDAPI_KEY")
+    api_key = os.getenv("FOOTBALL_API_KEY")
 
     if api_key:
-        # Step 0: Verify Performance
+        # Step 0: Initialize Database
+        database.init_db()
+        
+        # Step 1: Verify Performance
         verify_previous_matches(api_key)
         
         # Step 1: Run Predictions
         fetch_predictions(api_key=api_key, dry_run=dry_run)
     else:
-        print("CRITICAL: RAPIDAPI_KEY not found in .env")
+        print("CRITICAL: FOOTBALL_API_KEY not found in .env")

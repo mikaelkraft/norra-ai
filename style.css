@@ -181,15 +181,108 @@ main {
 
 .loading { grid-column: 1 / -1; text-align: center; padding: 4rem; font-family: 'Orbitron'; opacity: 0.5; }
 
-footer {
-    text-align: center;
-    padding: 4rem;
-    opacity: 0.3;
+/* --- Dashboard V2 Enhancements --- */
+
+.last-sync {
+    font-size: 0.75rem;
+    opacity: 0.4;
+    margin-top: 1.5rem;
+    letter-spacing: 1px;
+}
+
+.filter-container {
+    padding: 0 10% 2rem;
+    display: flex;
+    justify-content: center;
+}
+
+.filter-bar {
+    display: flex;
+    gap: 0.8rem;
+    flex-wrap: wrap;
+    justify-content: center;
+    background: var(--glass);
+    padding: 1rem;
+    border-radius: 30px;
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(5px);
+}
+
+.filter-btn {
+    background: transparent;
+    border: 1px solid var(--glass-border);
+    color: var(--text);
+    padding: 0.5rem 1.2rem;
+    border-radius: 20px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    transition: all 0.3s ease;
+}
+
+.filter-btn.active, .filter-btn:hover {
+    background: var(--accent);
+    color: var(--bg-dark);
+    border-color: var(--accent);
+    box-shadow: 0 0 15px var(--accent-glow);
+}
+
+.prediction-card {
+    background: var(--glass);
+    border: 1px solid var(--glass-border);
+    backdrop-filter: blur(10px);
+    padding: 2rem;
+    border-radius: 24px;
+    transition: transform 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), border-color 0.3s ease;
+    animation: cardEntrance 0.6s ease forwards;
+    opacity: 0;
+}
+
+@keyframes cardEntrance {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+.confidence-gauge-container {
+    margin: 1.5rem 0;
     font-size: 0.8rem;
 }
 
+.gauge-label {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 0.5rem;
+}
+
+.gauge-track {
+    height: 6px;
+    background: rgba(255,255,255,0.05);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.gauge-fill {
+    height: 100%;
+    background: var(--accent);
+    box-shadow: 0 0 10px var(--accent-glow);
+    border-radius: 3px;
+    transition: width 1s ease-out;
+}
+
+.main-outcome {
+    background: linear-gradient(90deg, var(--accent-glow), transparent);
+    padding: 1.2rem;
+    border-radius: 12px;
+    border-left: 4px solid var(--accent);
+    font-weight: 700;
+    color: var(--accent);
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+}
+
 @media (max-width: 768px) {
-    header h1 { font-size: 2rem; }
+    header h1 { font-size: 2.2rem; }
     nav { padding: 1.5rem 5%; }
     main { padding: 1rem 5%; }
+    .filter-container { padding: 0 5% 1rem; }
 }
