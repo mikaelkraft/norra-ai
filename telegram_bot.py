@@ -3,6 +3,7 @@ import telebot
 from dotenv import load_dotenv
 from sqlalchemy.orm import Session
 import database
+from database import SessionLocal, Prediction, PostTimeline
 
 load_dotenv()
 
@@ -66,6 +67,48 @@ if bot:
             resp += f"⚽ {p.home_team} vs {p.away_team}: {p.prediction_main}\n"
         
         bot.send_message(message.chat.id, resp, parse_mode="Markdown")
+
+    @bot.message_handler(commands=['timeline'])
+    def get_timeline_posts(message):
+        db = SessionLocal()
+        try:
+            posts = db.query(PostTimeline).order_by(PostTimeline.created_at.desc()).limit(5).all()
+            if not posts:
+                bot.reply_to(message, "No posts logged in the timeline feed database.")
+                return
+                
+            resp = "🛰️ **Recent Broadcast Timeline Posts:**\n\n"
+            for p in posts:
+                resp += f"🆔 **ID: {p.id}** | Platform: {p.platform}\n"
+                resp += f"📝 {p.content[:150]}...\n\n"
+            resp += "Use `/repost <id>` to rebroadcast any pick to the main channel!"
+            bot.send_message(message.chat.id, resp, parse_mode="Markdown")
+        except Exception as e:
+            bot.reply_to(message, f"Database error: {e}")
+        finally:
+            db.close()
+
+    @bot.message_handler(commands=['repost'])
+    def repost_post(message):
+        args = message.text.split()
+        if len(args) < 2:
+            bot.reply_to(message, "Usage: `/repost <id>`")
+            return
+            
+        post_id = args[1]
+        db = SessionLocal()
+        try:
+            post = db.query(PostTimeline).filter(PostTimeline.id == post_id).first()
+            if not post:
+                bot.reply_to(message, f"Post with ID {post_id} not found.")
+                return
+                
+            bot.send_message(TELEGRAM_CHANNEL_ID, post.content, parse_mode="Markdown")
+            bot.reply_to(message, f"🎯 Rebroadcasted post ID {post_id} to channel {TELEGRAM_CHANNEL_ID} successfully!")
+        except Exception as e:
+            bot.reply_to(message, f"Failed to rebroadcast: {e}")
+        finally:
+            db.close()
 
 if __name__ == "__main__":
     if bot:

@@ -98,19 +98,26 @@ def post_manual(fixture_id: int, platform: str, token: str, db: Session = Depend
     content += f"🌟 Combo: {pred.combos} | 🔮 HT/FT: {pred.ht_ft}\n\n"
     content += "🔗 Visit: norra-ai.vercel.app"
 
+    api_error = None
+
     if platform == "Telegram":
         import telegram_bot
         if telegram_bot.bot and telegram_bot.TELEGRAM_CHANNEL_ID:
             try:
                 telegram_bot.bot.send_message(telegram_bot.TELEGRAM_CHANNEL_ID, content, parse_mode="Markdown")
-                post_record = database.PostTimeline(fixture_id=fixture_id, platform="Telegram", content=content)
-                db.add(post_record)
-                db.commit()
-                return {"status": "success", "message": "Posted to Telegram successfully!"}
             except Exception as e:
-                raise HTTPException(status_code=500, detail=f"Telegram error: {e}")
+                api_error = f"Telegram API failed: {e}"
         else:
-            raise HTTPException(status_code=500, detail="Telegram bot credentials unconfigured.")
+            api_error = "Telegram bot credentials unconfigured."
+            
+        # Always log to local timeline database regardless of Telegram API failures!
+        post_record = database.PostTimeline(fixture_id=fixture_id, platform="Telegram", content=content)
+        db.add(post_record)
+        db.commit()
+        
+        if api_error:
+            return {"status": "success", "message": f"Posted to Web App timeline, but social broadcast failed: {api_error}"}
+        return {"status": "success", "message": "Posted to Telegram and Web App successfully!"}
             
     elif platform == "X":
         import tweepy
@@ -119,26 +126,31 @@ def post_manual(fixture_id: int, platform: str, token: str, db: Session = Depend
         access_token = os.getenv("X_ACCESS_TOKEN")
         access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
         
+        tweet_link = None
         if not (consumer_key and consumer_secret and access_token and access_token_secret):
-            raise HTTPException(status_code=500, detail="Twitter API keys not configured.")
-            
-        try:
-            client = tweepy.Client(
-                consumer_key=consumer_key,
-                consumer_secret=consumer_secret,
-                access_token=access_token,
-                access_token_secret=access_token_secret
-            )
-            response = client.create_tweet(text=content)
-            tweet_id = response.data.get("id") if response.data else None
-            tweet_link = f"https://x.com/user/status/{tweet_id}" if tweet_id else None
-            
-            post_record = database.PostTimeline(fixture_id=fixture_id, platform="X", content=content, link=tweet_link)
-            db.add(post_record)
-            db.commit()
-            return {"status": "success", "message": "Posted to X successfully!", "link": tweet_link}
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Twitter error: {e}")
+            api_error = "Twitter API keys not configured in environment."
+        else:
+            try:
+                client = tweepy.Client(
+                    consumer_key=consumer_key,
+                    consumer_secret=consumer_secret,
+                    access_token=access_token,
+                    access_token_secret=access_token_secret
+                )
+                response = client.create_tweet(text=content)
+                tweet_id = response.data.get("id") if response.data else None
+                tweet_link = f"https://x.com/user/status/{tweet_id}" if tweet_id else None
+            except Exception as e:
+                api_error = f"Twitter API failed: {e}"
+                
+        # Always log to local timeline database regardless of X/Twitter API failures!
+        post_record = database.PostTimeline(fixture_id=fixture_id, platform="X", content=content, link=tweet_link)
+        db.add(post_record)
+        db.commit()
+        
+        if api_error:
+            return {"status": "success", "message": f"Posted to Web App timeline, but social broadcast failed: {api_error}"}
+        return {"status": "success", "message": "Posted to X and Web App successfully!", "link": tweet_link}
 
 from fastapi.responses import HTMLResponse
 
