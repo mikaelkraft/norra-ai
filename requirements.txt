@@ -1,0 +1,11 @@
+fastapi
+uvicorn
+sqlalchemy
+psycopg2-binary
+scikit-learn
+numpy
+pandas
+tweepy
+requests
+python-dotenv
+pyTelegramBotAPI
