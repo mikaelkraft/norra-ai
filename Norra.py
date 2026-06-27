@@ -335,59 +335,77 @@ def post_predictions(predictions, dry_run=False):
             f"NorraAI Prediction Beacon Force"
         )
         
+        def parse_confidence(conf_str):
+            try:
+                return float(str(conf_str).replace('%', ''))
+            except:
+                return 50.0
+
+        is_high_confidence = parse_confidence(conf) >= 90.0
+
+        if is_high_confidence:
+            try:
+                if dry_run:
+                    print(f"\n[DRY RUN TWEET for {match}]:\n{tweet_text}")
+                else:
+                    if client:
+                        client.create_tweet(text=tweet_text)
+                        stats["monthly_posts_count"] = stats.get("monthly_posts_count", 0) + 1
+                        
+                        # --- Record Prediction for Verification ---
+                        if "predictions_to_verify" not in stats:
+                            stats["predictions_to_verify"] = {}
+                        
+                        winner_type = "Home" if winner == home else ("Away" if winner == away else "Draw")
+                        stats["predictions_to_verify"][str(data['fixture_id'])] = winner_type
+                        
+                        update_bot_stats(stats)
+                        print(f"Prediction posted to X: {match}")
+
+                    # Also auto-broadcast to Telegram for high-confidence predictions
+                    import telegram_bot
+                    if telegram_bot.bot and telegram_bot.TELEGRAM_CHANNEL_ID:
+                        telegram_bot.bot.send_message(telegram_bot.TELEGRAM_CHANNEL_ID, tweet_text, parse_mode="Markdown")
+                        print(f"Prediction broadcast to Telegram: {match}")
+            except Exception as e:
+                print(f"Failed to auto-post high confidence prediction: {e}")
+        else:
+            print(f"Confidence {conf} is below 90% threshold for {match}. Skipped auto-post.")
+
+        # --- Sync to Ecosystem Database (Persistent) - Always run for all predictions ---
+        db = SessionLocal()
         try:
-            if dry_run:
-                print(f"\n[DRY RUN TWEET for {match}]:\n{tweet_text}")
-            else:
-                if client:
-                    client.create_tweet(text=tweet_text)
-                    stats["monthly_posts_count"] = stats.get("monthly_posts_count", 0) + 1
-                    
-                    # --- Record Prediction for Verification ---
-                    if "predictions_to_verify" not in stats:
-                        stats["predictions_to_verify"] = {}
-                    
-                    winner_type = "Home" if winner == home else ("Away" if winner == away else "Draw")
-                    stats["predictions_to_verify"][str(data['fixture_id'])] = winner_type
-                    
-                    update_bot_stats(stats)
-                    print(f"Prediction posted: {match}")
-
-                # --- Sync to Ecosystem Database (Persistent) ---
-                db = SessionLocal()
-                try:
-                    existing = db.query(Prediction).filter(Prediction.fixture_id == data['fixture_id']).first()
-                    if not existing:
-                        new_pred = Prediction(
-                            fixture_id=data['fixture_id'],
-                            home_team=home,
-                            away_team=away,
-                            league_name=data.get('league_name', 'Global League'),
-                            prediction_main=winner,
-                            confidence=conf,
-                            dc=det['dc'],
-                            ht=det['ht'],
-                            ou_refined=det['ou_refined'],
-                            star_power=det['star_power'],
-                            h2h_dom=det['h2h_dom']
-                        )
-                        db.add(new_pred)
-                        db.commit()
-                        print(f"Prediction synced to database: {match}")
-                except Exception as e:
-                    print(f"Database sync failed for {match}: {e}")
-                finally:
-                    db.close()
-
+            existing = db.query(Prediction).filter(Prediction.fixture_id == data['fixture_id']).first()
+            if not existing:
+                new_pred = Prediction(
+                    fixture_id=data['fixture_id'],
+                    home_team=home,
+                    away_team=away,
+                    league_name=data.get('league_name', 'Global League'),
+                    prediction_main=winner,
+                    confidence=conf,
+                    dc=det['dc'],
+                    ht=det['ht'],
+                    ou_refined=det['ou_refined'],
+                    btts=det['btts'],
+                    dnb=det['dnb'],
+                    multi_goals=det['multi_goals'],
+                    ht_ft=det['ht_ft'],
+                    combos=det['combos'],
+                    star_power=det['star_power'],
+                    h2h_dom=det['h2h_dom'],
+                    league_avg_goals=det['league_avg_goals']
+                )
+                db.add(new_pred)
+                db.commit()
+                print(f"Prediction synced to database: {match}")
         except Exception as e:
-            print(f"Failed to post/sync prediction for {match}: {e}")
+            print(f"Database sync failed for {match}: {e}")
+        finally:
+            db.close()
 
-    # --- Eco-System Broadcast (Telegram) ---
-    if not dry_run:
-        try:
-            telegram_bot.broadcast_predictions()
-        except Exception as e:
-            print(f"Telegram broadcast trigger failed: {e}")
+    # Telegram broadcasting is now handled inside the loop for high-confidence predictions.
+    # We disable the global broadcast to avoid duplicate broadcasts.
 
     # --- GitHub Pages Sync (Serverless fallback) ---
     save_predictions_to_json(predictions)

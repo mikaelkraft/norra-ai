@@ -34,6 +34,11 @@ class Prediction(Base):
     ou_refined = Column(String)
     star_power = Column(String)
     h2h_dom = Column(Integer)
+    btts = Column(String)
+    dnb = Column(String)
+    multi_goals = Column(String)
+    ht_ft = Column(String)
+    combos = Column(String)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class MatchTrainingData(Base):
@@ -50,6 +55,8 @@ class MatchTrainingData(Base):
     home_defensive_wall = Column(Float)
     h2h_dominance = Column(Integer)
     home_advantage = Column(Integer)
+    home_goals = Column(Integer)
+    away_goals = Column(Integer)
     result = Column(Integer)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
@@ -60,6 +67,16 @@ class BotStats(Base):
     key = Column(String, unique=True, index=True) # e.g. "global_stats"
     data = Column(JSON) # Dict storing stats and predictions_to_verify
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+class PostTimeline(Base):
+    __tablename__ = "post_timeline"
+
+    id = Column(Integer, primary_key=True, index=True)
+    fixture_id = Column(Integer, index=True)
+    platform = Column(String) # "X" or "Telegram"
+    content = Column(String)
+    link = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 def init_db():
     Base.metadata.create_all(bind=engine)

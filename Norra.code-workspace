@@ -6,6 +6,7 @@
 	],
 	"settings": {
 		"editor.suggest.snippetsPreventQuickSuggestions": false,
-		"aiXcoder.showTrayIcon": true
+		"aiXcoder.showTrayIcon": true,
+		"python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe"
 	}
 }

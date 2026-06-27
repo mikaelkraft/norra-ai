@@ -30,7 +30,7 @@ load_dotenv()
 
 api_key = os.getenv("FOOTBALL_API_KEY")
 
-# League Tiers (Expanded for 365-day coverage)
+# League Tiers (Expanded for 365-day coverage & summer/women leagues)
 TIER_1_LEAGUES = [
     2,    # Champions League
     3,    # Europa League
@@ -52,7 +52,10 @@ TIER_1_LEAGUES = [
     1,    # World Cup
     4,    # Euro Championship
     9,    # Copa America
-    6     # AFCON
+    6,    # AFCON
+    113,  # Allsvenskan (Sweden)
+    103,  # Eliteserien (Norway)
+    98    # J1 League (Japan)
 ]
 
 TIER_2_LEAGUES = [
@@ -64,16 +67,20 @@ TIER_2_LEAGUES = [
     144,  # Jupiler Pro League (Belgium)
     218,  # Austrian Bundesliga
     207,  # Swiss Super League
-    113,  # Allsvenskan (Sweden)
     119,  # Superliga (Denmark)
-    103,  # Eliteserien (Norway)
     188,  # A-League (Australia)
-    98,   # J1 League (Japan)
     305,  # Qatar Stars League
     235,  # Russian Premier League
     41,   # League One
     202,  # Vietnamese V.League 1
-    399   # Superliga (Denmark alternate)
+    399,  # Superliga (Denmark alternate)
+    169,  # China Super League
+    244,  # Veikkausliiga (Finland)
+    358,  # Urvalsdeild (Iceland)
+    115,  # Damallsvenskan Women (Sweden)
+    258,  # NWSL Women (USA)
+    74,   # Brasileiro Feminino A1 (Brazil)
+    44    # WSL Women (England)
 ]
 
 def get_prioritized_fixtures(date, api_key):

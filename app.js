@@ -68,12 +68,19 @@ function renderGrid() {
 
         card.innerHTML = `
             <div class="card-header">
-                <span class="card-tier">Beacon V4</span>
+                <span class="card-tier">Beacon V4 ML</span>
                 <span>${p.league}</span>
             </div>
             <div class="teams">
                 ${p.home} <span>VS</span> ${p.away}
             </div>
+
+            ${p.league_avg_goals ? `
+            <div class="avg-goals-badge">
+                📊 League Avg: <strong>${p.league_avg_goals} goals/game</strong>
+            </div>
+            ` : ''}
+
             <div class="confidence-gauge-container">
                 <div class="gauge-label">
                     <span>Precision Level</span>
@@ -86,28 +93,104 @@ function renderGrid() {
 
             <div class="stats-grid">
                 <div class="stat-item">
-                    <span class="stat-label">Win/Draw</span>
-                    <span class="stat-value">${p.dc}</span>
+                    <span class="stat-label">Double Chance</span>
+                    <span class="stat-value">${p.dc || 'N/A'}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">BTTS (GG/NG)</span>
+                    <span class="stat-value">${p.btts || 'N/A'}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Draw No Bet</span>
+                    <span class="stat-value">${p.dnb || 'N/A'}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">Multi-Goals</span>
+                    <span class="stat-value">${p.multi_goals || 'N/A'}</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">HT/FT Market</span>
+                    <span class="stat-value">${p.ht_ft || 'N/A'}</span>
                 </div>
                 <div class="stat-item">
                     <span class="stat-label">Goal Forecast</span>
-                    <span class="stat-value">${p.ou}</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">HT Result</span>
-                    <span class="stat-value">${p.ht}</span>
-                </div>
-                <div class="stat-item">
-                    <span class="stat-label">Star Power</span>
-                    <span class="stat-value">${p.stars}</span>
+                    <span class="stat-value">${p.ou_refined || 'N/A'}</span>
                 </div>
             </div>
+            
+            <div class="combo-bet-container">
+                <span class="stat-label">⚡ Combo Value Pick</span>
+                <div class="combo-badge">${p.combos || 'N/A'}</div>
+            </div>
+
             <div class="main-outcome">
-                🎯 ${p.main}
+                🎯 FT Outcome: ${p.main}
             </div>
         `;
         grid.appendChild(card);
     });
+}
+
+async function fetchTimeline() {
+    const timelineContainer = document.getElementById('timeline-container');
+    if (!timelineContainer) return;
+    
+    try {
+        const response = await fetch(`${BACKEND_URL}/api/timeline`);
+        const data = await response.json();
+        
+        if (data.length === 0) {
+            timelineContainer.innerHTML = '<div class="loading">No broadcast signals captured in this sector yet.</div>';
+            return;
+        }
+        
+        timelineContainer.innerHTML = '';
+        
+        data.forEach(post => {
+            const card = document.createElement('div');
+            card.className = 'timeline-card';
+            
+            // Random-ish initial likes to simulate active user reactions
+            const agreeCount = Math.floor(Math.random() * 24) + 12;
+            const valueCount = Math.floor(Math.random() * 15) + 6;
+            
+            card.innerHTML = `
+                <div class="timeline-header">
+                    <span class="platform-badge platform-${post.platform.toLowerCase()}">
+                        ${post.platform === 'X' ? '🐦 X (Twitter)' : '📢 Telegram'}
+                    </span>
+                    <span class="timeline-date">${post.date}</span>
+                </div>
+                <div class="timeline-body">${post.content.replace(/\n/g, '<br>')}</div>
+                ${post.link ? `<a href="${post.link}" target="_blank" class="timeline-link">View Original Post &rarr;</a>` : ''}
+                <div class="reaction-bar">
+                    <button class="reaction-btn" onclick="reactToPost(this)">
+                        🔥 Agree <span class="react-count">${agreeCount}</span>
+                    </button>
+                    <button class="reaction-btn" onclick="reactToPost(this)">
+                        📈 Value Pick <span class="react-count">${valueCount}</span>
+                    </button>
+                </div>
+            `;
+            timelineContainer.appendChild(card);
+        });
+    } catch (err) {
+        console.error('Timeline fetch error:', err);
+        timelineContainer.innerHTML = '<div class="loading">Failed to load timeline feed.</div>';
+    }
+}
+
+function reactToPost(btn) {
+    const countSpan = btn.querySelector('.react-count');
+    if (!btn.classList.contains('reacted')) {
+        btn.classList.add('reacted');
+        countSpan.textContent = parseInt(countSpan.textContent) + 1;
+        btn.style.borderColor = 'var(--accent)';
+    } else {
+        btn.classList.remove('reacted');
+        countSpan.textContent = parseInt(countSpan.textContent) - 1;
+        btn.style.borderColor = 'var(--glass-border)';
+    }
 }
 
 function setDynamicYear() {
@@ -120,8 +203,12 @@ function setDynamicYear() {
 // Fetch on load
 document.addEventListener('DOMContentLoaded', () => {
     fetchPredictions();
+    fetchTimeline();
     setDynamicYear();
 });
 
 // Refresh every 5 minutes
-setInterval(fetchPredictions, 300000);
+setInterval(() => {
+    fetchPredictions();
+    fetchTimeline();
+}, 300000);
