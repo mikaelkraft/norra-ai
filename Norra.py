@@ -10,7 +10,7 @@ import numpy as np
 import tweepy
 from football_api import get_fixtures
 import database
-from database import SessionLocal, Prediction, BotStats
+from database import SessionLocal, Prediction, BotStats, PostTimeline
 import telegram_bot
 import json
 
@@ -348,8 +348,9 @@ def post_predictions(predictions, dry_run=False):
                 if dry_run:
                     print(f"\n[DRY RUN TWEET for {match}]:\n{tweet_text}")
                 else:
+                    tweet_link = None
                     if client:
-                        client.create_tweet(text=tweet_text)
+                        response = client.create_tweet(text=tweet_text)
                         stats["monthly_posts_count"] = stats.get("monthly_posts_count", 0) + 1
                         
                         # --- Record Prediction for Verification ---
@@ -361,12 +362,43 @@ def post_predictions(predictions, dry_run=False):
                         
                         update_bot_stats(stats)
                         print(f"Prediction posted to X: {match}")
+                        
+                        tweet_id = response.data.get("id") if response.data else None
+                        tweet_link = f"https://x.com/user/status/{tweet_id}" if tweet_id else None
 
                     # Also auto-broadcast to Telegram for high-confidence predictions
                     import telegram_bot
                     if telegram_bot.bot and telegram_bot.TELEGRAM_CHANNEL_ID:
                         telegram_bot.bot.send_message(telegram_bot.TELEGRAM_CHANNEL_ID, tweet_text, parse_mode="Markdown")
                         print(f"Prediction broadcast to Telegram: {match}")
+
+                    # Sync X and Telegram posts to PostTimeline database table!
+                    db_session = SessionLocal()
+                    try:
+                        if client:
+                            x_record = PostTimeline(
+                                fixture_id=data['fixture_id'],
+                                platform="X",
+                                content=tweet_text,
+                                link=tweet_link
+                            )
+                            db_session.add(x_record)
+                        
+                        if telegram_bot.bot and telegram_bot.TELEGRAM_CHANNEL_ID:
+                            tg_record = PostTimeline(
+                                fixture_id=data['fixture_id'],
+                                platform="Telegram",
+                                content=tweet_text
+                            )
+                            db_session.add(tg_record)
+                            
+                        db_session.commit()
+                        print(f"Picks synced to timeline feed database: {match}")
+                    except Exception as db_err:
+                        db_session.rollback()
+                        print(f"Timeline DB Sync Failed: {db_err}")
+                    finally:
+                        db_session.close()
             except Exception as e:
                 print(f"Failed to auto-post high confidence prediction: {e}")
         else:

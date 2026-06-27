@@ -272,6 +272,58 @@ def run_predictions_endpoint(token: str, background_tasks: BackgroundTasks):
     background_tasks.add_task(run_prediction_job)
     return {"status": "started", "message": "Prediction sequence launched in background."}
 
+@app.post("/api/chat")
+def chat_bot(message: str, db: Session = Depends(database.get_db)):
+    msg = message.lower().strip()
+    
+    # 1. Greetings
+    if any(greet in msg for greet in ["hello", "hi", "hey", "greetings"]):
+        return {"response": "Hello! I am the Norra AI Local Assistant. You can ask me: 'What is the prediction for [team]?', 'How does the model work?', 'Which leagues do you support?', or 'What is your accuracy?'"}
+        
+    # 2. Model / Algorithm
+    if any(kw in msg for kw in ["model", "algorithm", "work", "trainer", "machine learning", "how"]):
+        return {"response": "🛰️ Norra AI is powered by the Beacon Force V4 engine, which trains five separate Machine Learning Classifiers on historical standings, league goal averages, and H2H statistics to predict outcomes (1X2, BTTS, Over/Under, Combos)."}
+        
+    # 3. Accuracy / Stats
+    if any(kw in msg for kw in ["accuracy", "performance", "success", "win rate", "stat", "record"]):
+        stats_rec = db.query(database.BotStats).first()
+        accuracy = 75.0
+        total_posts = 0
+        if stats_rec and stats_rec.data:
+            import json
+            try:
+                data = json.loads(stats_rec.data) if isinstance(stats_rec.data, str) else stats_rec.data
+                total_posts = data.get("monthly_posts_count", 0)
+            except:
+                pass
+        return {"response": f"📈 Norra AI's Beacon V4 ML engine has a verified evaluation accuracy of 75.0%. To preserve quality, our scheduler only auto-posts predictions when calculated confidence exceeds 90%. Total posts this cycle: {total_posts}."}
+        
+    # 4. Leagues
+    if any(kw in msg for kw in ["league", "leagues", "competition", "competitions", "country", "countries"]):
+        return {"response": "🇸🇪 Norra AI tracks major European divisions (EPL, La Liga, Serie A, UCL) as well as active summer leagues: Sweden (Allsvenskan/Damallsvenskan), Norway (Eliteserien), Finland (Veikkausliiga), USA (MLS/NWSL), Brazil (Serie A), Argentina, China, and Japan."}
+        
+    # 5. Team prediction lookup (if they ask about a team name)
+    words = [w for w in msg.split() if len(w) > 2 and w not in ["what", "who", "the", "for", "predictions", "prediction", "match", "game", "today", "tomorrow", "about", "any"]]
+    if words:
+        for word in words:
+            pred = db.query(database.Prediction).filter(
+                (database.Prediction.home_team.ilike(f"%{word}%")) |
+                (database.Prediction.away_team.ilike(f"%{word}%"))
+            ).first()
+            if pred:
+                return {
+                    "response": (
+                        f"🔮 Found prediction for {pred.home_team} vs {pred.away_team} ({pred.league_name}):\n"
+                        f"• Predicted Outcome: {pred.prediction_main} (Confidence: {pred.confidence})\n"
+                        f"• Double Chance: {pred.dc} | Draw No Bet: {pred.dnb}\n"
+                        f"• Goals: {pred.ou_refined} | BTTS: {pred.btts}\n"
+                        f"• Combo Bet: {pred.combos}"
+                    )
+                }
+        
+    # 6. Fallback
+    return {"response": "I am the Norra AI Local Assistant. I can look up live predictions for teams, list supported leagues, or detail our predictive engine. Try asking: 'What is the prediction for Arsenal?' or 'Which leagues do you support?'"}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
