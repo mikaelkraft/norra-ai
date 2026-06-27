@@ -1,6 +1,7 @@
 import os
 import datetime
-from prediction_model import fetch_training_data, train_model, TRAINING_DATA_FILE
+from prediction_model import fetch_training_data, train_model
+from database import SessionLocal, MatchTrainingData, init_db
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -9,10 +10,21 @@ api_key = os.getenv("FOOTBALL_API_KEY")
 def verify_wholesome_persistence():
     print("--- Wholesome Persistence Verification ---")
     
-    # 1. Clear existing test data if any
-    if os.path.exists(TRAINING_DATA_FILE):
-        os.remove(TRAINING_DATA_FILE)
-        print(f"Cleaned {TRAINING_DATA_FILE}")
+    # Initialize Database
+    init_db()
+    
+    # 1. Clear existing test data in MatchTrainingData table
+    db = SessionLocal()
+    try:
+        num_deleted = db.query(MatchTrainingData).delete()
+        db.commit()
+        print(f"Cleaned {num_deleted} records from match_training_data table.")
+    except Exception as e:
+        db.rollback()
+        print(f"Failed to clean database: {e}")
+        return
+    finally:
+        db.close()
 
     # 2. Fetch for a single league (EPL - ID: 39)
     print("Fetching training data for EPL (League 39)...")
@@ -20,18 +32,23 @@ def verify_wholesome_persistence():
     df = fetch_training_data(api_key, league_ids)
     
     if df.empty:
-        print("FAIL: No data fetched.")
+        print("FAIL: No data fetched (check if API key is configured).")
         return
 
     print(f"SUCCESS: Fetched {len(df)} samples.")
     print("Columns found:", df.columns.tolist())
     
-    # 3. Verify CSV exists
-    if os.path.exists(TRAINING_DATA_FILE):
-        print(f"SUCCESS: {TRAINING_DATA_FILE} created.")
-    else:
-        print(f"FAIL: {TRAINING_DATA_FILE} NOT created.")
-        return
+    # 3. Verify Database rows exist
+    db = SessionLocal()
+    try:
+        count = db.query(MatchTrainingData).count()
+        if count > 0:
+            print(f"SUCCESS: {count} rows created in database.")
+        else:
+            print("FAIL: No rows created in database.")
+            return
+    finally:
+        db.close()
 
     # 4. Verify Feature Wholesomeness
     required_features = ["home_star_power", "home_motivation", "home_defensive_wall", "h2h_dominance"]
@@ -51,3 +68,4 @@ def verify_wholesome_persistence():
 
 if __name__ == "__main__":
     verify_wholesome_persistence()
+

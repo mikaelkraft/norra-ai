@@ -1,9 +1,9 @@
-from fastapi import FastAPI, Depends, HTTPException
+import os
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import List
 import database
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 app = FastAPI(title="Norra AI Prediction API")
 
@@ -19,10 +19,10 @@ app.add_middleware(
 # Initialize Database
 database.init_db()
 
-@app.get("/predictions", response_model=List[dict])
+@app.get("/predictions")
 def read_predictions(db: Session = Depends(database.get_db)):
     predictions = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(20).all()
-    return [{
+    formatted_preds = [{
         "fixture_id": p.fixture_id,
         "home": p.home_team,
         "away": p.away_team,
@@ -36,19 +36,56 @@ def read_predictions(db: Session = Depends(database.get_db)):
         "h2h": p.h2h_dom,
         "date": p.created_at.strftime("%Y-%m-%d %H:%M")
     } for p in predictions]
+    
+    last_updated = "Unknown"
+    if predictions:
+        last_updated = predictions[0].created_at.strftime("%Y-%m-%d %H:%M UTC")
+        
+    return {
+        "last_updated": last_updated,
+        "predictions": formatted_preds
+    }
 
 @app.get("/stats")
 def read_stats():
-    import json
+    from Norra import load_bot_stats
     try:
-        with open("bot_stats.json", "r") as f:
-            return json.load(f)
-    except:
-        return {"error": "Stats file not found"}
+        return load_bot_stats()
+    except Exception as e:
+        return {"error": f"Failed to load stats: {e}"}
 
-# Mount files from the root for the dashboard
-app.mount("/", StaticFiles(directory=".", html=True), name="static")
+@app.get("/api/run-predictions")
+def run_predictions_endpoint(token: str, background_tasks: BackgroundTasks):
+    secure_token = os.getenv("CRON_TOKEN")
+    if not secure_token:
+        raise HTTPException(status_code=500, detail="CRON_TOKEN env variable not configured on server.")
+    
+    if token != secure_token:
+        raise HTTPException(status_code=401, detail="Unauthorized token.")
+    
+    # Run in background to prevent client timeouts
+    from Norra import verify_previous_matches, fetch_predictions
+    
+    def run_prediction_job():
+        print("Starting background prediction sequence...")
+        api_key = os.getenv("FOOTBALL_API_KEY")
+        if api_key:
+            try:
+                verify_previous_matches(api_key)
+            except Exception as e:
+                print(f"Error in background match verification: {e}")
+                
+            try:
+                fetch_predictions(api_key=api_key, dry_run=False)
+            except Exception as e:
+                print(f"Error in background prediction run: {e}")
+        else:
+            print("FOOTBALL_API_KEY missing in background task context.")
+
+    background_tasks.add_task(run_prediction_job)
+    return {"status": "started", "message": "Prediction sequence launched in background."}
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

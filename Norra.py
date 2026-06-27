@@ -10,7 +10,7 @@ import numpy as np
 import tweepy
 from football_api import get_fixtures
 import database
-from database import SessionLocal, Prediction
+from database import SessionLocal, Prediction, BotStats
 import telegram_bot
 import json
 
@@ -164,33 +164,90 @@ def generate_predictions(fixtures, api_key, model=None):
         }
 
     return predictions
-def get_twitter_api():
-    """Authenticates and returns the Tweepy API object."""
+def get_twitter_client():
+    """Authenticates and returns the Tweepy Client object (API v2)."""
     consumer_key = os.getenv("X_CONSUMER_KEY")
     consumer_secret = os.getenv("X_CONSUMER_SECRET")
     access_token = os.getenv("X_ACCESS_TOKEN")
     access_token_secret = os.getenv("X_ACCESS_TOKEN_SECRET")
     
+    if not all([consumer_key, consumer_secret, access_token, access_token_secret]):
+        print("Twitter credentials incomplete in environment variables.")
+        return None
+        
     try:
-        auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
-        auth.set_access_token(access_token, access_token_secret)
-        api = tweepy.API(auth)
-        if api.verify_credentials():
-            return api
-        else:
-            print("Twitter authentication failed. Check credentials.")
+        # Tweepy Client uses API v2 which is supported on Free Tier
+        client = tweepy.Client(
+            consumer_key=consumer_key,
+            consumer_secret=consumer_secret,
+            access_token=access_token,
+            access_token_secret=access_token_secret
+        )
+        return client
     except Exception as e:
-        print(f"Twitter auth error: {e}")
+        print(f"Twitter client init error: {e}")
     return None
 
-def post_predictions(predictions, dry_run=False):
-    """Posts predictions to X, managing rate limits and standalone achievements."""
-    import json
+def load_bot_stats():
+    """Loads bot statistics from the database, falling back to JSON or default stats."""
+    db = SessionLocal()
+    try:
+        record = db.query(BotStats).filter(BotStats.key == "global_stats").first()
+        if record and record.data:
+            return record.data
+    except Exception as e:
+        print(f"Failed to load bot stats from DB: {e}")
+    finally:
+        db.close()
+        
+    # Fallback to local file if available
     stats_file = "bot_stats.json"
-    stats = {}
     if os.path.exists(stats_file):
-        with open(stats_file, "r") as f:
-            stats = json.load(f)
+        try:
+            with open(stats_file, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"Failed to read local stats file fallback: {e}")
+            
+    # Default stats schema
+    return {
+        "monthly_posts_count": 0,
+        "last_reset_month": datetime.datetime.now().strftime("%Y-%m"),
+        "weekly_wins": 0,
+        "predictions_to_verify": {}
+    }
+
+def update_bot_stats(stats):
+    """Helper to save bot statistics to the database (and local file fallback)."""
+    db = SessionLocal()
+    try:
+        record = db.query(BotStats).filter(BotStats.key == "global_stats").first()
+        if not record:
+            record = BotStats(key="global_stats", data=stats)
+            db.add(record)
+        else:
+            record.data = stats
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(record, "data")
+        db.commit()
+        print("Bot stats updated in database.")
+    except Exception as e:
+        db.rollback()
+        print(f"Error saving bot stats to database: {e}")
+    finally:
+        db.close()
+
+    # Still write locally as fallback
+    stats_file = "bot_stats.json"
+    try:
+        with open(stats_file, "w") as f:
+            json.dump(stats, f, indent=4)
+    except IOError as e:
+        print(f"Error saving bot stats fallback file: {e}")
+
+def post_predictions(predictions, dry_run=False):
+    """Posts predictions to X using Tweepy API v2, managing rate limits and standalone achievements."""
+    stats = load_bot_stats()
     
     # --- Rate Limit Management ---
     current_month = datetime.datetime.now().strftime("%Y-%m")
@@ -209,11 +266,11 @@ def post_predictions(predictions, dry_run=False):
         print("CRITICAL: Monthly X post limit reached. Skipping posts.")
         return
 
-    # Authenticate once to save "Reads" quota
-    api = None
+    # Authenticate once to save quota/verify setup
+    client = None
     if not dry_run:
-        api = get_twitter_api()
-        if not api:
+        client = get_twitter_client()
+        if not client:
             print("X authentication failed. Aborting post sequence.")
             return
 
@@ -235,10 +292,10 @@ def post_predictions(predictions, dry_run=False):
             f"Consistency is key. Near-perfect predictions rolling out now.\n\n"
             f"NorraAI Football Predictions"
         )
-        if not dry_run and engagement_safe: # Only post if not dry run AND engagement is safe
+        if not dry_run and engagement_safe:
             try:
-                if api:
-                    api.update_status(achievement_text)
+                if client:
+                    client.create_tweet(text=achievement_text)
                     stats["monthly_posts_count"] = stats.get("monthly_posts_count", 0) + 1
                     stats["last_shoutout_date"] = today_str
                     update_bot_stats(stats)
@@ -282,17 +339,14 @@ def post_predictions(predictions, dry_run=False):
             if dry_run:
                 print(f"\n[DRY RUN TWEET for {match}]:\n{tweet_text}")
             else:
-                if api:
-                    api.update_status(tweet_text)
+                if client:
+                    client.create_tweet(text=tweet_text)
                     stats["monthly_posts_count"] = stats.get("monthly_posts_count", 0) + 1
                     
                     # --- Record Prediction for Verification ---
-                    # We store the fixture_id and our expected winner for tomorrow's verification
                     if "predictions_to_verify" not in stats:
                         stats["predictions_to_verify"] = {}
                     
-                    # Store as: {fixture_id: predicted_winner_type}
-                    # winner_type: "Home", "Away", "Draw"
                     winner_type = "Home" if winner == home else ("Away" if winner == away else "Draw")
                     stats["predictions_to_verify"][str(data['fixture_id'])] = winner_type
                     
@@ -302,7 +356,6 @@ def post_predictions(predictions, dry_run=False):
                 # --- Sync to Ecosystem Database (Persistent) ---
                 db = SessionLocal()
                 try:
-                    # Check if fixture already exists to avoid duplicates
                     existing = db.query(Prediction).filter(Prediction.fixture_id == data['fixture_id']).first()
                     if not existing:
                         new_pred = Prediction(
@@ -330,19 +383,17 @@ def post_predictions(predictions, dry_run=False):
             print(f"Failed to post/sync prediction for {match}: {e}")
 
     # --- Eco-System Broadcast (Telegram) ---
-    # After all predictions are posted/synced, broadcast the daily picks to Telegram
     if not dry_run:
         try:
             telegram_bot.broadcast_predictions()
         except Exception as e:
             print(f"Telegram broadcast trigger failed: {e}")
 
-    # --- GitHub Pages Sync (Serverless) ---
-    # Export predictions to a flat JSON file for hosting on GitHub Pages
+    # --- GitHub Pages Sync (Serverless fallback) ---
     save_predictions_to_json(predictions)
 
 def save_predictions_to_json(predictions):
-    """Saves predictions to a flat JSON file for GitHub Pages."""
+    """Saves predictions to a flat JSON file for GitHub Pages (local fallback)."""
     output_file = "predictions.json"
     last_updated = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
     
@@ -375,15 +426,6 @@ def save_predictions_to_json(predictions):
     except Exception as e:
         print(f"Failed to export JSON for GitHub Pages: {e}")
 
-def update_bot_stats(stats):
-    """Helper to save bot statistics to file."""
-    stats_file = "bot_stats.json"
-    try:
-        with open(stats_file, "w") as f:
-            json.dump(stats, f, indent=4)
-    except IOError as e:
-        print(f"Error saving bot stats: {e}")
-
 def verify_previous_matches(api_key):
     """
     Verifies the outcomes of matches from yesterday that were predicted,
@@ -394,14 +436,7 @@ def verify_previous_matches(api_key):
     import os
     from football_api import get_fixture_by_id
 
-    stats_file = "bot_stats.json"
-    stats = {}
-    if os.path.exists(stats_file):
-        try:
-            with open(stats_file, "r") as f:
-                stats = json.load(f)
-        except:
-            return
+    stats = load_bot_stats()
 
     # Initialize keys
     stats.setdefault('predictions_to_verify', {})

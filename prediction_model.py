@@ -10,6 +10,7 @@ import datetime
 import os
 from dotenv import load_dotenv
 from football_api import get_fixtures
+from database import SessionLocal, MatchTrainingData
 
 load_dotenv()
 
@@ -21,32 +22,83 @@ ANALYTICAL_CACHE = {
     "stats": {}
 }
 
-TRAINING_DATA_FILE = "training_data.csv"
+def save_training_data(df_or_list):
+    """Saves training data to the database, skipping duplicates by fixture_id."""
+    if isinstance(df_or_list, pd.DataFrame):
+        records = df_or_list.to_dict(orient="records")
+    else:
+        records = df_or_list
 
-def save_training_data(df):
-    """Saves the training dataframe to CSV."""
-    if df.empty: return
-    # If file exists, append without header; else create new
-    header = not os.path.exists(TRAINING_DATA_FILE)
-    df.to_csv(TRAINING_DATA_FILE, mode='a', index=False, header=header)
-    print(f"Appended {len(df)} samples to {TRAINING_DATA_FILE}")
+    if not records:
+        return
+
+    db = SessionLocal()
+    try:
+        new_records_count = 0
+        for r in records:
+            if "fixture_id" not in r:
+                continue
+            existing = db.query(MatchTrainingData).filter(MatchTrainingData.fixture_id == r["fixture_id"]).first()
+            if not existing:
+                db_record = MatchTrainingData(
+                    fixture_id=r["fixture_id"],
+                    league_id=r["league_id"],
+                    home_rank=r["home_rank"],
+                    away_rank=r["away_rank"],
+                    home_motivation=r["home_motivation"],
+                    away_motivation=r["away_motivation"],
+                    home_star_power=r["home_star_power"],
+                    home_defensive_wall=r["home_defensive_wall"],
+                    h2h_dominance=r["h2h_dominance"],
+                    home_advantage=r["home_advantage"],
+                    result=r["result"]
+                )
+                db.add(db_record)
+                new_records_count += 1
+        
+        if new_records_count > 0:
+            db.commit()
+            print(f"Saved {new_records_count} new training samples to the database.")
+    except Exception as e:
+        db.rollback()
+        print(f"Error saving training data to database: {e}")
+    finally:
+        db.close()
 
 def load_training_data():
-    """Loads existing training data from CSV."""
-    if not os.path.exists(TRAINING_DATA_FILE):
-        return pd.DataFrame()
+    """Loads existing training data from the database for ML training (excluding IDs)."""
+    db = SessionLocal()
     try:
-        df = pd.read_csv(TRAINING_DATA_FILE)
-        # Drop duplicates based on home/away/date if we had date, 
-        # but for now just unique ID pairs in the set
-        return df
-    except:
+        records = db.query(MatchTrainingData).all()
+        if not records:
+            return pd.DataFrame()
+        
+        data_list = []
+        for r in records:
+            data_list.append({
+                "league_id": r.league_id,
+                "home_rank": r.home_rank,
+                "away_rank": r.away_rank,
+                "home_motivation": r.home_motivation,
+                "away_motivation": r.away_motivation,
+                "home_star_power": r.home_star_power,
+                "home_defensive_wall": r.home_defensive_wall,
+                "h2h_dominance": r.h2h_dominance,
+                "home_advantage": r.home_advantage,
+                "result": r.result
+            })
+        
+        return pd.DataFrame(data_list)
+    except Exception as e:
+        print(f"Error loading training data from database: {e}")
         return pd.DataFrame()
+    finally:
+        db.close()
 
 def fetch_training_data(api_key, league_ids):
     """
     Incremental Fetcher: Only fetches data for leagues with limited representation 
-    in the existing CSV to save API quota.
+    in the database to save API quota.
     """
     existing_df = load_training_data()
     all_data = []
@@ -72,7 +124,7 @@ def fetch_training_data(api_key, league_ids):
             if league_data:
                 all_data.extend(league_data)
                 # Save incrementally
-                save_training_data(pd.DataFrame(league_data))
+                save_training_data(league_data)
     
     # Reload full wholesome dataset
     return load_training_data()
@@ -85,6 +137,7 @@ def process_fixtures_data(fixtures_data, api_key):
     standings_cache = {}
 
     for fixture in fixtures_data:
+        fixture_id = fixture['fixture']['id']
         home_id = fixture['teams']['home']['id']
         away_id = fixture['teams']['away']['id']
         league_id = fixture['league']['id']
@@ -130,6 +183,7 @@ def process_fixtures_data(fixtures_data, api_key):
 
             # Features
             data_point = {
+                "fixture_id": fixture_id,
                 "league_id": league_id,
                 "home_rank": home_rank,
                 "away_rank": away_rank,
@@ -144,6 +198,7 @@ def process_fixtures_data(fixtures_data, api_key):
             processed_data.append(data_point)
 
     return processed_data
+
 
 def train_model(df):
     if df.empty:

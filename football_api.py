@@ -428,6 +428,10 @@ def get_coach_history(team_id, api_key):
         return []
 
 if __name__ == "__main__":
-    # Example usage
-    current_date = datetime.datetime.now().date()  # Replace with the actual date
-    fetch_predictions(league_ids, current_date)
+    # Example usage: fetch prioritized fixtures for today
+    current_date = datetime.datetime.now().date()
+    if api_key:
+        fixtures = get_prioritized_fixtures(current_date, api_key)
+        print(f"Found {len(fixtures)} prioritized fixtures for today.")
+    else:
+        print("FOOTBALL_API_KEY not configured in environment. Example run skipped.")
