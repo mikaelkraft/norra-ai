@@ -121,7 +121,22 @@ def get_prioritized_fixtures(date, api_key):
             print(f"Found {len(tier_2_found)} matches in Tier 2 leagues.")
             return tier_2_found
             
-        print("No matches found in Tier 1 or Tier 2 today.")
+        print("No matches found in Tier 1 or Tier 2 today. Activating off-season universal fallback...")
+        # Filter out youth matches, lower reserves, or simulated leagues to keep predictions high-quality
+        excluded_keywords = ["youth", "u19", "u21", "u23", "u17", "u20", "reserve", "simulated", "virtual"]
+        tier_3_candidates = []
+        for f in all_data:
+            league_name = f.get('league', {}).get('name', '').lower()
+            if any(kw in league_name for kw in excluded_keywords):
+                continue
+            tier_3_candidates.append(f)
+            
+        if tier_3_candidates:
+            selected_candidates = tier_3_candidates[:8]
+            print(f"Found {len(tier_3_candidates)} candidates. Selecting top {len(selected_candidates)} for fallback analysis.")
+            return selected_candidates
+            
+        print("No matches found globally today.")
         return []
     except Exception as e:
         print(f"Error in prioritized fixture discovery: {e}")
