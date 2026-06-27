@@ -38,7 +38,7 @@ def broadcast_predictions():
         message += f"🛡️ DC: {p.dc} | 💎 O/U: {p.ou_refined}\n"
         message += f"⏱️ HT: {p.ht} | 🌟 Stars: {p.star_power}\n\n"
 
-    message += "🔗 [Visit Web Dashboard](https://norra-ai.onrender.com)\n"
+    message += "🔗 [Visit Web Dashboard](https://mikaelkraft.github.io/norra-ai)\n"
     message += "NorraAI Prediction Beacon Force"
 
     try:
