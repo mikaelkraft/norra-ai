@@ -3,7 +3,7 @@ let activeFilter = 'All';
 
 // Dynamic backend URL resolution: if on GitHub Pages, use Render API URL; else use relative URL
 const BACKEND_URL = window.location.hostname.includes('github.io')
-    ? 'https://norra-ai.onrender.com' // Replace this with your actual Render URL in production
+    ? 'https://norra-ai.onrender.com' // ctual Render URL in production
     : ''; // Relative URL for local development or self-hosted deployment
 
 async function fetchPredictions() {
