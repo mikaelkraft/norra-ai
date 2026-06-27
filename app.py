@@ -19,6 +19,13 @@ app.add_middleware(
 # Initialize Database
 database.init_db()
 
+@app.get("/")
+def read_root():
+    return {
+        "status": "online",
+        "message": "Norra AI API is active. Predictions are available at /predictions and statistics at /stats."
+    }
+
 @app.get("/predictions")
 def read_predictions(db: Session = Depends(database.get_db)):
     predictions = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(20).all()
