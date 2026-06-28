@@ -25,28 +25,30 @@ def broadcast_predictions():
         print("Telegram credentials missing or uninitialized.")
         return
 
-    db = next(database.get_db())
-    predictions = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(5).all()
-
-    if not predictions:
-        print("No predictions found to broadcast.")
-        return
-
-    message = "🛰️ **NorraAI BEACON FORCE | TOP PICKS**\n\n"
-    for p in predictions:
-        message += f"⚽ **{p.home_team} vs {p.away_team}**\n"
-        message += f"🔮 Logic: {p.prediction_main}\n"
-        message += f"🛡️ DC: {p.dc} | 💎 O/U: {p.ou_refined}\n"
-        message += f"⏱️ HT: {p.ht} | 🌟 Stars: {p.star_power}\n\n"
-
-    message += "🔗 [Visit Web Dashboard](https://mikaelkraft.github.io/norra-ai)\n"
-    message += "NorraAI Prediction Beacon Force"
-
+    db = SessionLocal()
     try:
+        predictions = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(5).all()
+
+        if not predictions:
+            print("No predictions found to broadcast.")
+            return
+
+        message = "🛰️ **NorraAI BEACON FORCE | TOP PICKS**\n\n"
+        for p in predictions:
+            message += f"⚽ **{p.home_team} vs {p.away_team}**\n"
+            message += f"🔮 Logic: {p.prediction_main}\n"
+            message += f"🛡️ DC: {p.dc} | 💎 O/U: {p.ou_refined}\n"
+            message += f"⏱️ HT: {p.ht} | 🌟 Stars: {p.star_power}\n\n"
+
+        message += "🔗 [Visit Web Dashboard](https://mikaelkraft.github.io/norra-ai)\n"
+        message += "NorraAI Prediction Beacon Force"
+
         bot.send_message(TELEGRAM_CHANNEL_ID, message, parse_mode="Markdown")
         print("Telegram broadcast successful!")
     except Exception as e:
         print(f"Telegram broadcast failed: {e}")
+    finally:
+        db.close()
 
 if bot:
     @bot.message_handler(commands=['start', 'help'])
@@ -56,90 +58,92 @@ if bot:
     @bot.message_handler(commands=['today'])
     def send_predictions(message):
         args = message.text.split()
-        db = next(database.get_db())
-        
-        # Check if the user specified a team (e.g. "/today Arsenal")
-        if len(args) > 1:
-            query = " ".join(args[1:]).lower().strip()
-            # 1. Search existing predictions
-            predictions = db.query(database.Prediction).filter(
-                (database.Prediction.home_team.ilike(f"%{query}%")) |
-                (database.Prediction.away_team.ilike(f"%{query}%"))
-            ).order_by(database.Prediction.created_at.desc()).limit(1).all()
-            
-            # 2. If not found, trigger on-demand generation using free ESPN Scoreboard & API-Football
-            if not predictions:
-                bot.reply_to(message, f"🔍 Checking today's global scoreboard schedules for '{query}'...")
-                import espn_api
-                fixtures = espn_api.fetch_combined_today_fixtures()
-                match = None
-                for f in fixtures:
-                    if query in f["home"].lower() or query in f["away"].lower():
-                        match = f
-                        break
-                        
-                if not match:
-                    bot.reply_to(message, f"❌ No match scheduled for '{query}' today on global scoreboards.")
-                    return
-                    
-                # Match found on ESPN, call API-Football for this fixture
-                api_key = os.getenv("FOOTBALL_API_KEY")
-                if not api_key:
-                    bot.reply_to(message, "❌ Server Error: FOOTBALL_API_KEY is not configured.")
-                    return
-                    
-                from football_api import get_fixtures
-                from Norra import generate_predictions, post_predictions
-                import datetime
-                
-                today_date = datetime.datetime.now().date()
-                api_fixtures = get_fixtures(api_key, league_id=match["league_id"], date=today_date)
-                
-                target_fixture = None
-                for af in api_fixtures:
-                    if query in af['teams']['home']['name'].lower() or query in af['teams']['away']['name'].lower():
-                        target_fixture = af
-                        break
-                        
-                if not target_fixture:
-                    bot.reply_to(message, f"❌ Match schedule found, but details could not be resolved at this time.")
-                    return
-                    
-                bot.reply_to(message, f"🎯 Found fixture! Running prediction algorithm on-demand...")
-                
-                # Fetch ML model
-                model = None
-                try:
-                    from prediction_model import load_training_data, train_model
-                    train_df = load_training_data()
-                    if not train_df.empty:
-                        model = train_model(train_df)
-                except Exception as e:
-                    print(f"Failed to load/train model on-demand: {e}")
-                    
-                predictions_dict = generate_predictions([target_fixture], api_key, model=model)
-                post_predictions(predictions_dict, dry_run=False)
-                
-                # Reload prediction from DB
+        db = SessionLocal()
+        try:
+            # Check if the user specified a team (e.g. "/today Arsenal")
+            if len(args) > 1:
+                query = " ".join(args[1:]).lower().strip()
+                # 1. Search existing predictions
                 predictions = db.query(database.Prediction).filter(
-                    database.Prediction.fixture_id == target_fixture['fixture']['id']
-                ).all()
-        else:
-            # Default to top 5 recent predictions
-            predictions = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(5).all()
-        
-        if not predictions:
-            bot.reply_to(message, "No active beacons found.")
-            return
+                    (database.Prediction.home_team.ilike(f"%{query}%")) |
+                    (database.Prediction.away_team.ilike(f"%{query}%"))
+                ).order_by(database.Prediction.created_at.desc()).limit(1).all()
+                
+                # 2. If not found, trigger on-demand generation using free ESPN Scoreboard & API-Football
+                if not predictions:
+                    bot.reply_to(message, f"🔍 Checking today's global scoreboard schedules for '{query}'...")
+                    import espn_api
+                    fixtures = espn_api.fetch_combined_today_fixtures()
+                    match = None
+                    for f in fixtures:
+                        if query in f["home"].lower() or query in f["away"].lower():
+                            match = f
+                            break
+                            
+                    if not match:
+                        bot.reply_to(message, f"❌ No match scheduled for '{query}' today on global scoreboards.")
+                        return
+                        
+                    # Match found on ESPN, call API-Football for this fixture
+                    api_key = os.getenv("FOOTBALL_API_KEY")
+                    if not api_key:
+                        bot.reply_to(message, "❌ Server Error: FOOTBALL_API_KEY is not configured.")
+                        return
+                        
+                    from football_api import get_fixtures
+                    from Norra import generate_predictions, post_predictions
+                    import datetime
+                    
+                    today_date = datetime.datetime.now().date()
+                    api_fixtures = get_fixtures(api_key, league_id=match["league_id"], date=today_date)
+                    
+                    target_fixture = None
+                    for af in api_fixtures:
+                        if query in af['teams']['home']['name'].lower() or query in af['teams']['away']['name'].lower():
+                            target_fixture = af
+                            break
+                            
+                    if not target_fixture:
+                        bot.reply_to(message, f"❌ Match schedule found, but details could not be resolved at this time.")
+                        return
+                        
+                    bot.reply_to(message, f"🎯 Found fixture! Running prediction algorithm on-demand...")
+                    
+                    # Fetch ML model
+                    model = None
+                    try:
+                        from prediction_model import load_training_data, train_model
+                        train_df = load_training_data()
+                        if not train_df.empty:
+                            model = train_model(train_df)
+                    except Exception as e:
+                        print(f"Failed to load/train model on-demand: {e}")
+                        
+                    predictions_dict = generate_predictions([target_fixture], api_key, model=model)
+                    post_predictions(predictions_dict, dry_run=False)
+                    
+                    # Reload prediction from DB
+                    predictions = db.query(database.Prediction).filter(
+                        database.Prediction.fixture_id == target_fixture['fixture']['id']
+                    ).all()
+            else:
+                # Default to top 5 recent predictions
+                predictions = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(5).all()
             
-        resp = "🛰️ **NorraAI BEACON FORCE FORECASTS**\n\n"
-        for p in predictions:
-            resp += f"⚽ **{p.home_team} vs {p.away_team}** ({p.league_name})\n"
-            resp += f"🔮 Outcome: {p.prediction_main} ({p.confidence})\n"
-            resp += f"🛡️ DC: {p.dc} | 💎 Goals: {p.ou_refined}\n"
-            resp += f"⏱️ HT: {p.ht} | 🌟 Stars: {p.star_power}\n\n"
-            
-        bot.send_message(message.chat.id, resp, parse_mode="Markdown")
+            if not predictions:
+                bot.reply_to(message, "No active beacons found.")
+                return
+                
+            resp = "🛰️ **NorraAI BEACON FORCE FORECASTS**\n\n"
+            for p in predictions:
+                resp += f"⚽ **{p.home_team} vs {p.away_team}** ({p.league_name})\n"
+                resp += f"🔮 Outcome: {p.prediction_main} ({p.confidence})\n"
+                resp += f"🛡️ DC: {p.dc} | 💎 Goals: {p.ou_refined}\n"
+                resp += f"⏱️ HT: {p.ht} | 🌟 Stars: {p.star_power}\n\n"
+                
+            bot.send_message(message.chat.id, resp, parse_mode="Markdown")
+        finally:
+            db.close()
 
     @bot.message_handler(commands=['timeline'])
     def get_timeline_posts(message):

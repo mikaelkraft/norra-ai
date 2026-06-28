@@ -38,3 +38,15 @@
 * Unified the prediction pipeline to be **100% driven by your RandomForestClassifier** outputs (replacing all external API advice for win outcomes, GG/BTTS, Over/Under goal forecasts, and posting thresholds).
 * Added World Cup Qualifiers (Europe, South America, North & Central America, Africa, Asia, Oceania, and Intercontinental Play-offs, IDs 10–16) directly to `TIER_1_LEAGUES` and mapped their codes in `espn_api.py`.
 * Successfully validated all mock tests and dry runs.
+
+### Session Continuation (June 28, 2026 - 12:06 PM)
+* **User Request**: Check the chat history.
+* **Our Response**: Summarized the current session's history and key features implemented (such as Cron troubleshooting, API safeguard limits, Progressive Fetching, ESPN/SportsDB live scoreboard search, Chatbot fixes, and mobile responsiveness).
+
+### Session Continuation (June 28, 2026 - 1:37 PM)
+* **User Request**: Fix Telegram 409 Conflict error on Render logs and empty predictions rendering on the frontend.
+* **Our Response & Implementation**:
+  * Implemented secure **Telegram Webhooks** in `app.py` for Render production (using `RENDER_EXTERNAL_URL`), preventing multiple polling instances and allowing automatic wakeup of the Render container upon new bot messages.
+  * Resolved the local frontend empty grid display bug in `app.js` by dynamically routing API queries to `http://127.0.0.1:8000` when hosted locally (localhost/127.0.0.1/file protocol).
+  * Tested and verified the webhook's authorization validation against unauthorized requests (401) and valid message inputs (200 OK).
+  * **Database Optimization (Non-Pooled Neon DB)**: Updated `telegram_bot.py`'s `/today` and `broadcast_predictions` handlers to explicitly open and close database sessions using `SessionLocal()` inside `try...finally` blocks. This ensures that database connections are immediately closed and released, preventing connection exhaustion on your unpooled Neon instance.

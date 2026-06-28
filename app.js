@@ -3,8 +3,10 @@ let activeFilter = 'All';
 
 // Dynamic backend URL resolution: if on GitHub Pages, use Render API URL; else use relative URL
 const BACKEND_URL = window.location.hostname.includes('github.io')
-    ? 'https://norra-ai.onrender.com' // ctual Render URL in production
-    : ''; // Relative URL for local development or self-hosted deployment
+    ? 'https://norra-ai.onrender.com' // Actual Render URL in production
+    : (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' || window.location.hostname === '')
+        ? 'http://127.0.0.1:8000' // Local FastAPI backend
+        : ''; // Relative URL for self-hosted production deployments
 
 async function fetchPredictions() {
     const grid = document.getElementById('prediction-grid');

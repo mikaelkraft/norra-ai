@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, Request, Header
 from sqlalchemy.orm import Session
 from typing import List
 import database
@@ -23,23 +23,62 @@ database.init_db()
 def startup_event():
     import threading
     telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    public_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("PUBLIC_URL")
+    
     if telegram_token:
-        def run_bot():
-            import telegram_bot
-            if telegram_bot.bot:
-                print("Starting Telegram Bot infinity polling in background thread...")
+        import telegram_bot
+        if telegram_bot.bot:
+            if public_url:
+                print(f"Configuring Telegram Webhook at {public_url}/tg-webhook...")
                 try:
-                    telegram_bot.bot.infinity_polling(timeout=10, long_polling_timeout=5)
+                    telegram_bot.bot.remove_webhook()
+                    telegram_bot.bot.set_webhook(url=f"{public_url}/tg-webhook", secret_token=telegram_token)
+                    print("Telegram Webhook set successfully.")
                 except Exception as e:
-                    print(f"Telegram Bot polling error: {e}")
+                    print(f"Telegram Webhook setup error: {e}")
             else:
-                print("Telegram Bot uninitialized (bot is None).")
-
-        bot_thread = threading.Thread(target=run_bot, daemon=True)
-        bot_thread.start()
-        print("Telegram Bot background thread spawned.")
+                def run_bot():
+                    print("Starting Telegram Bot infinity polling in background thread...")
+                    try:
+                        # Clear webhook first in case it was set in production
+                        telegram_bot.bot.remove_webhook()
+                        telegram_bot.bot.infinity_polling(timeout=10, long_polling_timeout=5)
+                    except Exception as e:
+                        print(f"Telegram Bot polling error: {e}")
+        
+                bot_thread = threading.Thread(target=run_bot, daemon=True)
+                bot_thread.start()
+                print("Telegram Bot background thread spawned for polling.")
+        else:
+            print("Telegram Bot uninitialized (bot is None).")
     else:
-        print("TELEGRAM_BOT_TOKEN not configured. Skipping background bot polling.")
+        print("TELEGRAM_BOT_TOKEN not configured. Skipping background bot setup.")
+
+@app.post("/tg-webhook")
+async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: str = Header(None)):
+    import telegram_bot
+    import telebot
+    
+    telegram_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    if not telegram_token:
+        raise HTTPException(status_code=500, detail="Telegram bot token not configured.")
+        
+    if x_telegram_bot_api_secret_token != telegram_token:
+        raise HTTPException(status_code=401, detail="Unauthorized webhook source.")
+        
+    if telegram_bot.bot:
+        try:
+            json_string = await request.json()
+            update = telebot.types.Update.de_json(json_string)
+            telegram_bot.bot.process_new_updates([update])
+        except Exception as e:
+            print(f"Error processing Telegram webhook update: {e}")
+            raise HTTPException(status_code=400, detail=f"Update processing error: {e}")
+    else:
+        raise HTTPException(status_code=503, detail="Telegram bot service unavailable.")
+        
+    return {"status": "ok"}
+
 
 @app.get("/")
 def read_root():
