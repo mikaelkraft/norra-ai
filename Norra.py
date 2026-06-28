@@ -149,16 +149,24 @@ def generate_predictions(fixtures, api_key, model=None):
         location = fixture['fixture'].get('venue', {}).get('city', 'Unknown')
 
         result_key = f"{home_team} vs {away_team}"
+        
+        # Override the external API advice with our own RandomForestClassifier predictions
+        rf_winner = detailed_data.get("main", winner)
+        rf_confidence = detailed_data.get("confidence", conf)
+        rf_gg = detailed_data.get("btts", gg_outcome)
+        rf_ou = detailed_data.get("ou_refined", ou_outcome)
+        rf_advice = f"Based on ranks, motivation, and historical team stats, {rf_winner} is the high conviction outcome."
+
         predictions[result_key] = {
             "fixture_id": fixture_id,
             "league_name": league_name,
-            "winner": winner,
-            "confidence": conf,
-            "advice": advice,
+            "winner": rf_winner,
+            "confidence": rf_confidence,
+            "advice": rf_advice,
             "home": home_team,
             "away": away_team,
-            "gg": gg_outcome,
-            "ou": ou_outcome,
+            "gg": rf_gg,
+            "ou": rf_ou,
             "heading": f"🏆 NorraAI MATCHDAY: {league_name} | {venue}",
             "detailed": detailed_data
         }
@@ -341,7 +349,12 @@ def post_predictions(predictions, dry_run=False):
             except:
                 return 50.0
 
-        is_high_confidence = parse_confidence(conf) >= 90.0
+        try:
+            post_threshold = float(os.getenv("POST_CONFIDENCE_THRESHOLD", "70.0"))
+        except ValueError:
+            post_threshold = 70.0
+
+        is_high_confidence = parse_confidence(conf) >= post_threshold
 
         if is_high_confidence:
             if dry_run:

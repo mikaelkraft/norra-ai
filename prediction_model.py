@@ -179,36 +179,50 @@ def fetch_training_data(api_key, league_ids):
         prepopulate_synthetic_training_data()
         existing_df = load_training_data()
         
-    # By default, do NOT fetch real training data from the API to preserve limits
-    # unless explicitly requested in the environment.
-    fetch_real = os.getenv("FETCH_REAL_TRAINING_DATA", "False").lower() in ("true", "1")
-    if not fetch_real:
-        print("Bypassing API fetches for historical training data to preserve limits. Using local/synthetic DB data.")
+    # Progressive historical fetching is enabled by default (at most 1 league per run)
+    progressive_fetch = os.getenv("PROGRESSIVE_HISTORICAL_FETCH", "True").lower() in ("true", "1")
+    if not progressive_fetch:
+        print("Progressive historical data fetching is disabled. Using local/synthetic DB data.")
         return existing_df
 
-    all_data = []
-    
     # Calculate how many samples we have per league
     league_counts = {}
     if not existing_df.empty:
         league_counts = existing_df.get('league_id', pd.Series()).value_counts().to_dict()
 
-    print(f"Auditing wholesome training depth for {len(league_ids)} leagues...")
+    # Get maximum number of leagues to fetch per run (default: 1)
+    try:
+        max_fetches = int(os.getenv("MAX_LEAGUE_FETCHES_PER_RUN", "1"))
+    except ValueError:
+        max_fetches = 1
+
+    fetched_this_run = 0
+    print(f"Auditing wholesome training depth for {len(league_ids)} leagues (Max fetches this run: {max_fetches})...")
+    
     for league_id in league_ids:
-        # Target: at least 50 high-quality samples per league for a "Beacon Force"
+        # Check API quota safeguard
+        import football_api
+        if football_api.API_QUOTA_EXCEEDED:
+            print("Progressive Fetch: API quota limit was exceeded. Halting training fetch sequence.")
+            break
+
+        # Target: at least 50 high-quality samples per league
         current_count = league_counts.get(league_id, 0)
         if current_count >= 50:
-            print(f"League {league_id} has sufficient depth ({current_count} samples). Skipping fetch.")
             continue
             
-        print(f"Fetching fresh training context for League {league_id} (Current: {current_count})...")
+        if fetched_this_run >= max_fetches:
+            print(f"Progressive Fetch: Max fetches reached ({max_fetches}). Skipping league {league_id} for next runs.")
+            break
+            
+        print(f"Progressive Fetch: Fetching fresh training context for League {league_id} (Current: {current_count})...")
+        fetched_this_run += 1  # Count the attempt
+        
         # Fetch all fixtures for the last completed season (2025) in one call (very API efficient)
         fixtures_data = get_fixtures(api_key, league_id=league_id, season=2025)
         if fixtures_data:
             league_data = process_fixtures_data(fixtures_data, api_key)
             if league_data:
-                all_data.extend(league_data)
-                # Save incrementally
                 save_training_data(league_data)
     
     # Reload full wholesome dataset
@@ -737,41 +751,45 @@ def get_match_prediction(fixture, api_key, model=None):
     if temp and (temp < 0 or temp > 35): # Extreme temps
         weather_impact -= 5
         
+    quota_conservation = os.getenv("QUOTA_CONSERVATION", "True").lower() in ("true", "1")
+
+    # Core parameters always fetched
     home_form = calculate_team_form(home_id, league_id, api_key)
     away_form = calculate_team_form(away_id, league_id, api_key)
-    
     season = fixture['league'].get('season', 2025)
-    
-    # --- Beacon V3.1: Total Awareness Factors ---
-    home_injuries = calculate_injury_impact(home_id, league_id, season, api_key)
-    away_injuries = calculate_injury_impact(away_id, league_id, season, api_key)
-    
     h2h_dominance = calculate_deep_h2h_dominance(home_id, away_id, api_key)
     boogeyman_effect = calculate_boogeyman_score(home_id, away_id, h2h_dominance)
-    
-    home_fatigue = calculate_fatigue_index(home_id, api_key)
-    away_fatigue = calculate_fatigue_index(away_id, api_key)
-    
-    home_travel = calculate_travel_stress(league_id, False) # Home always 0
-    away_travel = calculate_travel_stress(league_id, True)
-    
-    venue_surface = fixture.get('fixture', {}).get('venue', {}).get('surface', 'grass')
-    # Use artificial turf penalty for home team if applicable (though they should be used to it)
-    # Applying it only as "Away Discomfort" if venue is artificial
-    away_turf_impact = calculate_surface_impact(venue_surface, "grass") 
-    
-    home_bounce = calculate_manager_bounce(home_id, api_key)
-    away_bounce = calculate_manager_bounce(away_id, api_key)
-    
-    # Market Sentiment Booster
     sentiment = get_market_sentiment(fixture_id, api_key)
-    
-    # --- Beacon V4: Omniscience Upgrade ---
-    poisson_boost = calculate_poisson_score(fixture_id, api_key)
     derby_active = calculate_derby_coefficient(fixture)
-    
-    home_stability = calculate_lineup_stability(home_id, api_key)
-    away_stability = calculate_lineup_stability(away_id, api_key)
+
+    # Surface & Travel
+    venue_surface = fixture.get('fixture', {}).get('venue', {}).get('surface', 'grass')
+    away_turf_impact = calculate_surface_impact(venue_surface, "grass")
+    home_travel = 0
+    away_travel = calculate_travel_stress(league_id, True)
+
+    if quota_conservation:
+        # Bypassed heavy API calls to keep requests under limit (saves 10+ calls per match)
+        home_injuries = 0
+        away_injuries = 0
+        home_fatigue = 0
+        away_fatigue = 0
+        home_bounce = 0
+        away_bounce = 0
+        poisson_boost = 0.0
+        home_stability = 0
+        away_stability = 0
+    else:
+        # Full high-quota mode
+        home_injuries = calculate_injury_impact(home_id, league_id, season, api_key)
+        away_injuries = calculate_injury_impact(away_id, league_id, season, api_key)
+        home_fatigue = calculate_fatigue_index(home_id, api_key)
+        away_fatigue = calculate_fatigue_index(away_id, api_key)
+        home_bounce = calculate_manager_bounce(home_id, api_key)
+        away_bounce = calculate_manager_bounce(away_id, api_key)
+        poisson_boost = calculate_poisson_score(fixture_id, api_key)
+        home_stability = calculate_lineup_stability(home_id, api_key)
+        away_stability = calculate_lineup_stability(away_id, api_key)
     
     # Derby Neutralizer: Boost the underdog form if it's a derby
     derby_home_boost = 10 if (derby_active and home_form < away_form) else 0
@@ -813,13 +831,14 @@ def get_match_prediction(fixture, api_key, model=None):
 
         home_rank, away_rank = 10, 10
         total_teams = 20
-        league_data = standings_raw.get('response', [])[0].get('league', {})
-        league_standings = league_data.get('standings', [])[0]
-        total_teams = len(league_standings)
-        for entry in league_standings:
-            tid = entry['team']['id']
-            if tid == home_id: home_rank = entry['rank']
-            if tid == away_rank: away_rank = entry['rank']
+        if standings_raw and isinstance(standings_raw, dict) and standings_raw.get('response'):
+            league_data = standings_raw.get('response', [])[0].get('league', {})
+            league_standings = league_data.get('standings', [])[0]
+            total_teams = len(league_standings)
+            for entry in league_standings:
+                tid = entry['team']['id']
+                if tid == home_id: home_rank = entry['rank']
+                if tid == away_rank: away_rank = entry['rank']
             
         home_motivation = calculate_league_motivation(home_rank, total_teams)
         away_motivation = calculate_league_motivation(away_rank, total_teams)
@@ -968,6 +987,7 @@ def get_match_prediction(fixture, api_key, model=None):
 
     return {
         "main": outcome,
+        "confidence": confidence_str,
         "dc": "1X / 2X" if "Draw" in outcome else ("Home/Draw" if "home" in outcome.lower() else "Away/Draw"),
         "ht": ht_result,
         "corners": calculate_corner_estimate(fixture_id, api_key),

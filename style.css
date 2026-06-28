@@ -511,12 +511,28 @@ footer span {
 }
 
 @media (max-width: 768px) {
+    body {
+        background-attachment: scroll !important;
+    }
     header h1 { font-size: 2.2rem; }
     nav { padding: 1.5rem 5%; }
     main { padding: 1rem 5%; }
     .filter-container { padding: 0 5% 1rem; }
     header { padding: 2rem 5%; }
     .timeline-section { padding: 2rem 5%; }
+}
+
+@media (max-width: 480px) {
+    .chat-widget {
+        right: 15px;
+        bottom: 15px;
+    }
+    .chat-window {
+        width: calc(100vw - 30px);
+        max-width: 350px;
+        right: 0px;
+        bottom: 75px;
+    }
 }
 
 /* --- Cookie Banner --- */

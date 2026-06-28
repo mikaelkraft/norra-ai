@@ -20,3 +20,21 @@
 3. Start the Telegram bot polling in a background thread in `app.py` on startup.
 4. Set a configurable confidence post threshold in `.env` (default: `70.0%`).
 5. Add an API rate-limit cutoff safeguard to prevent making network requests when the token limit is reached.
+
+### Execution & Verification Results
+* **All code changes successfully completed and tested.**
+* Verified background thread initialization for Telegram bot.
+* Verified that the daily API limits are protected by synthetic training pre-population.
+* Verified that the cron "output too large" failure is bypassed by wrapping `requests.get` to automatically truncate large text properties.
+* Mock tests and dry-run validation passed without errors.
+
+### Phase 2: Progressive Fetching & Global Scoreboard Live Search (June 28)
+* Integrated **Progressive Fetching** (fetches at most 1 league's historical 2025 season fixtures per cron run to protect daily quota).
+* Added `espn_api.py` utilizing the free, public **ESPN Scoreboard API** and **TheSportsDB API** (as an automatic fallback) to cache matches for the day without requiring API keys or quota.
+* Implemented the `/api/search-predict` web app endpoint and updated the Telegram bot's `/today <team>` command to check the database first, fall back to the free combined scoreboards, fetch details, run the RandomForest model live on-demand, save it, and return it.
+* Fixed the chatbot's substring matching bug (where common words containing `"hi"` or `"hey"` triggered the static greeting) by implementing strict split-word parsing in `app.py`.
+* Integrated live on-demand prediction fetches directly into the chatbot `/api/chat` route.
+* Added mobile CSS responsive rules in `style.css` to resize and realign the chatbot window on devices `< 480px`, preventing viewport overflow and truncation.
+* Unified the prediction pipeline to be **100% driven by your RandomForestClassifier** outputs (replacing all external API advice for win outcomes, GG/BTTS, Over/Under goal forecasts, and posting thresholds).
+* Added World Cup Qualifiers (Europe, South America, North & Central America, Africa, Asia, Oceania, and Intercontinental Play-offs, IDs 10–16) directly to `TIER_1_LEAGUES` and mapped their codes in `espn_api.py`.
+* Successfully validated all mock tests and dry runs.

@@ -6,6 +6,73 @@ import tweepy
 import pandas as pd
 import numpy as np
 
+# Global quota safeguard
+API_QUOTA_EXCEEDED = False
+
+class ResponseWrapper:
+    def __init__(self, response):
+        self._response = response
+        
+    @property
+    def status_code(self):
+        return self._response.status_code
+        
+    @property
+    def text(self):
+        # Truncate text representation in logs to prevent "output too large" cron failure
+        t = self._response.text
+        if len(t) > 200:
+            return t[:200] + "... [TRUNCATED to prevent cron output limit failure]"
+        return t
+        
+    def json(self):
+        return self._response.json()
+        
+    def __getattr__(self, name):
+        return getattr(self._response, name)
+
+_original_get = requests.get
+
+def requests_get_wrapper(url, *args, **kwargs):
+    global API_QUOTA_EXCEEDED
+    if API_QUOTA_EXCEEDED:
+        # Return a mock response indicating quota limit exceeded
+        class MockResponse:
+            status_code = 429
+            text = '{"errors": {"token": "Quota limit exceeded (safeguard)"}}'
+            def json(self):
+                return {"errors": {"token": "Quota limit exceeded (safeguard)"}, "response": []}
+        return MockResponse()
+        
+    try:
+        response = _original_get(url, *args, **kwargs)
+        if response.status_code == 429:
+            print("API response: 429 Too Many Requests. API quota exceeded.")
+            API_QUOTA_EXCEEDED = True
+            
+        elif response.status_code == 200:
+            try:
+                data = response.json()
+                errors = data.get("errors")
+                if errors:
+                    error_msgs = str(errors).lower()
+                    if "limit" in error_msgs or "quota" in error_msgs or "request limit" in error_msgs:
+                        print(f"API returned limit error: {errors}. Setting API_QUOTA_EXCEEDED flag.")
+                        API_QUOTA_EXCEEDED = True
+            except:
+                pass
+        return ResponseWrapper(response)
+    except Exception as e:
+        print(f"Exception during API request to {url}: {e}")
+        class MockErrorResponse:
+            status_code = 500
+            text = str(e)
+            def json(self):
+                return {"errors": {"exception": str(e)}, "response": []}
+        return MockErrorResponse()
+
+requests.get = requests_get_wrapper
+
 
 
 def fetch_team_data(api_key, league_id):
@@ -53,6 +120,13 @@ TIER_1_LEAGUES = [
     4,    # Euro Championship
     9,    # Copa America
     6,    # AFCON
+    10,   # WC Qualification Europe
+    11,   # WC Qualification South America
+    12,   # WC Qualification North & Central America
+    13,   # WC Qualification Africa
+    14,   # WC Qualification Asia
+    15,   # WC Qualification Oceania
+    16,   # WC Qualification Intercontinental Play-offs
     113,  # Allsvenskan (Sweden)
     103,  # Eliteserien (Norway)
     98    # J1 League (Japan)
