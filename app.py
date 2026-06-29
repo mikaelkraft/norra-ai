@@ -32,7 +32,9 @@ def startup_event():
                 print(f"Configuring Telegram Webhook at {public_url}/tg-webhook...")
                 try:
                     telegram_bot.bot.remove_webhook()
-                    telegram_bot.bot.set_webhook(url=f"{public_url}/tg-webhook", secret_token=telegram_token)
+                    # Replace colons with underscores to comply with Telegram's [A-Za-z0-9_-] secret_token restriction
+                    webhook_secret = telegram_token.replace(":", "_")
+                    telegram_bot.bot.set_webhook(url=f"{public_url}/tg-webhook", secret_token=webhook_secret)
                     print("Telegram Webhook set successfully.")
                 except Exception as e:
                     print(f"Telegram Webhook setup error: {e}")
@@ -63,7 +65,8 @@ async def telegram_webhook(request: Request, x_telegram_bot_api_secret_token: st
     if not telegram_token:
         raise HTTPException(status_code=500, detail="Telegram bot token not configured.")
         
-    if x_telegram_bot_api_secret_token != telegram_token:
+    webhook_secret = telegram_token.replace(":", "_")
+    if x_telegram_bot_api_secret_token != webhook_secret:
         raise HTTPException(status_code=401, detail="Unauthorized webhook source.")
         
     if telegram_bot.bot:
@@ -213,6 +216,27 @@ def post_manual(fixture_id: int, platform: str, token: str, db: Session = Depend
             return {"status": "success", "message": f"Posted to Web App timeline, but social broadcast failed: {api_error}"}
         return {"status": "success", "message": "Posted to X and Web App successfully!", "link": tweet_link}
 
+@app.get("/api/verify-admin-code")
+def verify_admin_code(code: str):
+    access_code = os.getenv("ADMIN_ACCESS_CODE")
+    if not access_code:
+        # Default fallback to secure token or a default value
+        access_code = os.getenv("CRON_TOKEN", "norra123")
+        
+    if code == access_code:
+        cron_token = os.getenv("CRON_TOKEN", "norra123")
+        return {"status": "success", "token": cron_token}
+    else:
+        import random
+        roasts = [
+            "Nice try, snooper! The Beacon sensors have registered your IP. Go bet on a 0-0 draw somewhere else.",
+            "Access Denied. The twin warrior queens Norra and Adrena have drawn their blades—stand back before you get sliced by their predictive fury!",
+            "Access Denied. Norra and Adrena are tracking your signal. Run before the warrior sisters lay siege to your browser.",
+            "Warning: Norra and Adrena's shield wall is impenetrable. Go find some other code to crack, kid.",
+            "Error 403: Intruder Alert! Norra and Adrena will lock you in a simulator where Arsenal never wins a trophy."
+        ]
+        return {"status": "error", "message": random.choice(roasts)}
+
 from fastapi.responses import HTMLResponse
 
 @app.get("/admin", response_class=HTMLResponse)
@@ -250,16 +274,18 @@ def admin_dashboard(token: str = ""):
         <title>Norra AI Admin Panel</title>
         <style>
             body {{ font-family: Arial, sans-serif; background: #0f172a; color: white; padding: 40px; margin: 0; }}
-            h1 {{ color: #3b82f6; }}
+            h1 {{ color: #3b82f6; margin: 0; }}
             .card {{ background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }}
             .btn {{ padding: 10px 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; margin-left: 10px; transition: opacity 0.2s; text-decoration: none; display: inline-block; }}
             .btn:hover {{ opacity: 0.9; }}
             .btn-x {{ background: #1da1f2; color: white; }}
             .btn-tg {{ background: #0088cc; color: white; }}
+            .btn-cron {{ background: #eab308; color: black; }}
             .info {{ display: flex; flex-direction: column; gap: 5px; }}
             .teams {{ font-size: 18px; font-weight: bold; }}
             .league {{ font-size: 14px; color: #94a3b8; }}
             .options {{ font-size: 14px; color: #e2e8f0; }}
+            .admin-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid #334155; padding-bottom: 20px; }}
         </style>
         <script>
             async function triggerPost(fixtureId, platform) {{
@@ -272,11 +298,37 @@ def admin_dashboard(token: str = ""):
                     alert(`Error: ${{data.detail}}`);
                 }}
             }}
+            
+            async function triggerPredictionRun() {{
+                const token = "{secure_token}";
+                const btn = document.getElementById("trigger-cron-btn");
+                btn.disabled = true;
+                btn.textContent = "⚙️ Running predictions...";
+                try {{
+                    const res = await fetch(`/api/run-predictions?token=${{token}}`);
+                    const data = await res.json();
+                    if (data.status === "started") {{
+                        alert("Predictions sequence launched successfully in the background! Please reload this page in 45-60 seconds to see the new predictions.");
+                    }} else {{
+                        alert(`Execution Error: ${{data.message}}`);
+                    }}
+                }} catch (err) {{
+                    alert(`Network Error: ${{err.message}}`);
+                }} finally {{
+                    btn.disabled = false;
+                    btn.textContent = "⚡ Run Daily Predictions (Cron)";
+                }}
+            }}
         </script>
     </head>
     <body>
-        <h1>🛰️ Norra AI Beacon Force Admin Panel</h1>
-        <p style="color: #94a3b8; margin-bottom: 30px;">Direct manual verification and posting engine.</p>
+        <div class="admin-header">
+            <div>
+                <h1>🛰️ Norra AI Beacon Force Admin Panel</h1>
+                <p style="color: #94a3b8; margin: 5px 0 0 0;">Direct manual verification and posting engine.</p>
+            </div>
+            <button id="trigger-cron-btn" class="btn btn-cron" onclick="triggerPredictionRun()">⚡ Run Daily Predictions (Cron)</button>
+        </div>
         <div id="predictions-list">
             Loading predictions...
         </div>
@@ -315,35 +367,42 @@ def admin_dashboard(token: str = ""):
 
 @app.get("/api/run-predictions")
 def run_predictions_endpoint(token: str, background_tasks: BackgroundTasks):
-    secure_token = os.getenv("CRON_TOKEN")
-    if not secure_token:
-        raise HTTPException(status_code=500, detail="CRON_TOKEN env variable not configured on server.")
-    
-    if token != secure_token:
-        raise HTTPException(status_code=401, detail="Unauthorized token.")
-    
-    # Run in background to prevent client timeouts
-    from Norra import verify_previous_matches, fetch_predictions
-    
-    def run_prediction_job():
-        print("Starting background prediction sequence...")
-        api_key = os.getenv("FOOTBALL_API_KEY")
-        if api_key:
-            try:
-                verify_previous_matches(api_key)
-            except Exception as e:
-                print(f"Error in background match verification: {e}")
-                
-            try:
-                # Runs twice daily predictions, filtering and auto-posting only those with confidence > 90%
-                fetch_predictions(api_key=api_key, dry_run=False)
-            except Exception as e:
-                print(f"Error in background prediction run: {e}")
-        else:
-            print("FOOTBALL_API_KEY missing in background task context.")
+    from fastapi.responses import JSONResponse
+    try:
+        secure_token = os.getenv("CRON_TOKEN")
+        if not secure_token:
+            return JSONResponse(status_code=500, content={"status": "error", "message": "CRON_TOKEN env variable not configured on server."})
+        
+        if token != secure_token:
+            return JSONResponse(status_code=401, content={"status": "error", "message": "Unauthorized token."})
+        
+        # Run in background to prevent client timeouts
+        try:
+            from Norra import verify_previous_matches, fetch_predictions
+        except Exception as imp_err:
+            return JSONResponse(status_code=500, content={"status": "error", "message": f"Failed to import prediction pipeline: {imp_err}"})
+        
+        def run_prediction_job():
+            print("Starting background prediction sequence...")
+            api_key = os.getenv("FOOTBALL_API_KEY")
+            if api_key:
+                try:
+                    verify_previous_matches(api_key)
+                except Exception as e:
+                    print(f"Error in background match verification: {e}")
+                    
+                try:
+                    # Runs twice daily predictions, filtering and auto-posting only those with confidence > 90%
+                    fetch_predictions(api_key=api_key, dry_run=False)
+                except Exception as e:
+                    print(f"Error in background prediction run: {e}")
+            else:
+                print("FOOTBALL_API_KEY missing in background task context.")
 
-    background_tasks.add_task(run_prediction_job)
-    return {"status": "started", "message": "Prediction sequence launched in background."}
+        background_tasks.add_task(run_prediction_job)
+        return {"status": "started", "message": "Prediction sequence launched in background."}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"status": "error", "message": f"Unexpected scheduler error: {e}"})
 
 @app.get("/api/search-predict")
 def search_predict(query: str, db: Session = Depends(database.get_db)):
@@ -562,8 +621,25 @@ def chat_bot(message: str, db: Session = Depends(database.get_db)):
             except Exception as e:
                 print(f"Chatbot on-demand prediction lookup error: {e}")
         
+        # If words were searched but no prediction could be found/generated:
+        searched_teams = ", ".join([w.capitalize() for w in words[:3]])
+        return {
+            "response": (
+                f"I checked today's global scoreboards but couldn't find a match scheduled for '{searched_teams}' today. "
+                "Norra AI only processes and predicts matches on the day of the game. "
+                "Please check back on matchday, or ask about another team playing today!"
+            )
+        }
+        
     # 6. Fallback
-    return {"response": "I am the Norra AI Local Assistant. I can look up live predictions for teams, list supported leagues, or detail our predictive engine. Try asking: 'What is the prediction for Arsenal?' or 'Which leagues do you support?'"}
+    latest_pred = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).first()
+    suggest_team = latest_pred.home_team if latest_pred else "Molde"
+    return {
+        "response": (
+            f"I am the Norra AI Local Assistant. I can look up live predictions for teams, list supported leagues, or detail our predictive engine. "
+            f"Try asking: 'What is the prediction for {suggest_team}?' or 'Which leagues do you support?'"
+        )
+    }
 
 if __name__ == "__main__":
     import uvicorn

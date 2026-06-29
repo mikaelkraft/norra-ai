@@ -102,6 +102,24 @@ nav {
     100% { transform: scale(0.95); opacity: 0; }
 }
 
+.admin-btn {
+    background: transparent;
+    border: 1px solid var(--accent);
+    color: var(--accent);
+    padding: 0.5rem 1rem;
+    border-radius: 20px;
+    font-size: 0.8rem;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+}
+
+.admin-btn:hover {
+    background: var(--accent);
+    color: #020617;
+    box-shadow: 0 0 15px var(--accent);
+}
+
 header {
     text-align: center;
     padding: 4rem 10% 2rem;
@@ -528,10 +546,13 @@ footer span {
         bottom: 15px;
     }
     .chat-window {
-        width: calc(100vw - 30px);
-        max-width: 350px;
-        right: 0px;
-        bottom: 75px;
+        position: fixed;
+        left: 15px;
+        right: 15px;
+        width: auto;
+        max-width: none;
+        bottom: 85px;
+        height: 400px;
     }
 }
 

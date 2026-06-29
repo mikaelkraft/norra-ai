@@ -39,6 +39,7 @@ class Prediction(Base):
     multi_goals = Column(String)
     ht_ft = Column(String)
     combos = Column(String)
+    league_avg_goals = Column(Float)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class MatchTrainingData(Base):

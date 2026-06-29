@@ -53,33 +53,38 @@ def save_training_data(df_or_list):
 
     db = SessionLocal()
     try:
-        new_records_count = 0
+        # Optimize: Fetch all existing fixture_ids in a single query to prevent N+1 queries
+        existing_ids = set(val[0] for val in db.query(MatchTrainingData.fixture_id).all())
+        
+        new_records = []
         for r in records:
             if "fixture_id" not in r:
                 continue
-            existing = db.query(MatchTrainingData).filter(MatchTrainingData.fixture_id == r["fixture_id"]).first()
-            if not existing:
-                db_record = MatchTrainingData(
-                    fixture_id=r["fixture_id"],
-                    league_id=r["league_id"],
-                    home_rank=r["home_rank"],
-                    away_rank=r["away_rank"],
-                    home_motivation=r["home_motivation"],
-                    away_motivation=r["away_motivation"],
-                    home_star_power=r["home_star_power"],
-                    home_defensive_wall=r["home_defensive_wall"],
-                    h2h_dominance=r["h2h_dominance"],
-                    home_advantage=r["home_advantage"],
-                    home_goals=r.get("home_goals", 0),
-                    away_goals=r.get("away_goals", 0),
-                    result=r["result"]
-                )
-                db.add(db_record)
-                new_records_count += 1
+            if r["fixture_id"] in existing_ids:
+                continue
+                
+            new_records.append({
+                "fixture_id": r["fixture_id"],
+                "league_id": r["league_id"],
+                "home_rank": r["home_rank"],
+                "away_rank": r["away_rank"],
+                "home_motivation": r["home_motivation"],
+                "away_motivation": r["away_motivation"],
+                "home_star_power": r["home_star_power"],
+                "home_defensive_wall": r["home_defensive_wall"],
+                "h2h_dominance": r["h2h_dominance"],
+                "home_advantage": r["home_advantage"],
+                "home_goals": r.get("home_goals", 0),
+                "away_goals": r.get("away_goals", 0),
+                "result": r["result"]
+            })
+            # Add to local set to avoid duplicates within the same batch
+            existing_ids.add(r["fixture_id"])
         
-        if new_records_count > 0:
+        if new_records:
+            db.bulk_insert_mappings(MatchTrainingData, new_records)
             db.commit()
-            print(f"Saved {new_records_count} new training samples to the database.")
+            print(f"Saved {len(new_records)} new training samples to the database using bulk insert.")
     except Exception as e:
         db.rollback()
         print(f"Error saving training data to database: {e}")
@@ -118,17 +123,178 @@ def load_training_data():
     finally:
         db.close()
 
+def fetch_football_data_co_uk_historical(league_id):
+    """
+    Downloads historical data from football-data.co.uk for a given league,
+    chronologically reconstructs standings to calculate ranks, and stores the records.
+    """
+    league_code_map = {
+        113: "SWE",  # Sweden Allsvenskan
+        103: "NOR",  # Norway Eliteserien
+        71: "BRA",   # Brazil Serie A
+        253: "USA",  # MLS
+        128: "ARG",  # Argentina Primera Division
+        262: "MEX",  # Mexico Liga MX
+        98: "JPN",   # J1 League
+        169: "CHN",  # China Super League
+        119: "DNK",  # Denmark Superliga
+        244: "FIN",  # Finland Veikkausliiga
+        235: "RUS"   # Russia Premier League
+    }
+    
+    code = league_code_map.get(league_id)
+    if not code:
+        print(f"No football-data.co.uk mapping for League ID {league_id}.")
+        return False
+        
+    url = f"https://www.football-data.co.uk/new/{code}.csv"
+    print(f"Fetching historical all-seasons CSV from: {url}...")
+    
+    import urllib.request
+    import csv
+    import io
+    import hashlib
+    
+    req = urllib.request.Request(
+        url, 
+        headers={'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    )
+    
+    try:
+        with urllib.request.urlopen(req, timeout=15) as response:
+            content = response.read().decode('utf-8-sig', errors='ignore')
+    except Exception as e:
+        print(f"Failed to download historical data for {code}: {e}")
+        return False
+        
+    f = io.StringIO(content)
+    reader = csv.DictReader(f)
+    
+    # standings[season][team_name] = {"points": 0, "goals_scored": 0, "goals_conceded": 0, "matches_played": 0}
+    standings = {}
+    records_to_insert = []
+    
+    for index, row in enumerate(reader):
+        season = row.get("Season")
+        home_team = row.get("Home")
+        away_team = row.get("Away")
+        
+        if not all([season, home_team, away_team]):
+            continue
+            
+        hg_str = row.get("HG")
+        ag_str = row.get("AG")
+        res = row.get("Res")
+        
+        if hg_str is None or ag_str is None or res is None:
+            continue
+            
+        try:
+            hg = int(hg_str)
+            ag = int(ag_str)
+        except ValueError:
+            continue
+            
+        if season not in standings:
+            standings[season] = {}
+            
+        season_standings = standings[season]
+        
+        if home_team not in season_standings:
+            season_standings[home_team] = {"points": 0, "goals_scored": 0, "goals_conceded": 0, "matches_played": 0}
+        if away_team not in season_standings:
+            season_standings[away_team] = {"points": 0, "goals_scored": 0, "goals_conceded": 0, "matches_played": 0}
+            
+        # Determine Ranks BEFORE the match is played
+        def get_rankings(st_dict):
+            def sort_key(item):
+                team, stats = item
+                gd = stats["goals_scored"] - stats["goals_conceded"]
+                return (stats["points"], gd, stats["goals_scored"])
+            sorted_teams = sorted(st_dict.items(), key=sort_key, reverse=True)
+            return {team: rank + 1 for rank, (team, _) in enumerate(sorted_teams)}
+            
+        ranks = get_rankings(season_standings)
+        
+        home_rank = ranks.get(home_team, 10)
+        away_rank = ranks.get(away_team, 10)
+        total_teams = len(ranks) or 20
+        
+        home_motivation = calculate_league_motivation(home_rank, total_teams)
+        away_motivation = calculate_league_motivation(away_rank, total_teams)
+        
+        # Estimate star power and defense wall
+        def get_team_star_power(stats):
+            mp = stats["matches_played"]
+            if mp == 0: return 5.0
+            avg_goals = stats["goals_scored"] / mp
+            return min(10.0, max(1.0, avg_goals * 4.0))
+            
+        def get_team_defensive_wall(stats):
+            mp = stats["matches_played"]
+            if mp == 0: return 5.0
+            avg_conceded = stats["goals_conceded"] / mp
+            return min(15.0, max(1.0, 15.0 - (avg_conceded * 5.0)))
+            
+        home_star = get_team_star_power(season_standings[home_team])
+        home_def = get_team_defensive_wall(season_standings[home_team])
+        
+        # Result: 1 (Home Win), 0 (Draw), 2 (Away Win)
+        result = 1 if hg > ag else (2 if ag > hg else 0)
+        
+        try:
+            season_int = int(float(season))
+        except ValueError:
+            season_int = 0
+            
+        # Generate standard 32-bit signed integer ID: <league_id><season_2_digits><row_index_3_digits>
+        fixture_id = int(f"{league_id}{season_int % 100}{index % 1000:03d}")
+        
+        data_point = {
+            "fixture_id": fixture_id,
+            "league_id": league_id,
+            "home_rank": home_rank,
+            "away_rank": away_rank,
+            "home_motivation": home_motivation,
+            "away_motivation": away_motivation,
+            "home_star_power": home_star,
+            "home_defensive_wall": home_def,
+            "h2h_dominance": 0,
+            "home_advantage": 1,
+            "home_goals": hg,
+            "away_goals": ag,
+            "result": result
+        }
+        records_to_insert.append(data_point)
+        
+        # Update standings with this match's results
+        season_standings[home_team]["matches_played"] += 1
+        season_standings[away_team]["matches_played"] += 1
+        season_standings[home_team]["goals_scored"] += hg
+        season_standings[home_team]["goals_conceded"] += ag
+        season_standings[away_team]["goals_scored"] += ag
+        season_standings[away_team]["goals_conceded"] += hg
+        
+        if result == 1:
+            season_standings[home_team]["points"] += 3
+        elif result == 2:
+            season_standings[away_team]["points"] += 3
+        else:
+            season_standings[home_team]["points"] += 1
+            season_standings[away_team]["points"] += 1
+            
+    if records_to_insert:
+        save_training_data(records_to_insert)
+        print(f"Successfully imported {len(records_to_insert)} historical matches for league ID {league_id}.")
+        return True
+    return False
+
 def prepopulate_synthetic_training_data():
-    """Pre-populates the database with high-quality synthetic training data if empty to save API quota."""
+    """Pre-populates the database with high-quality synthetic training data if empty as a last-resort fallback."""
     import numpy as np
-    import pandas as pd
-    
-    print("Pre-populating synthetic training data to avoid API limit exhaustion...")
-    
+    print("Pre-populating synthetic training data as fallback...")
     np.random.seed(42)
     n_samples = 150
-    
-    # Generate mock training samples
     mock_data = []
     for i in range(n_samples):
         league_id = int(np.random.choice([39, 140, 78, 135, 113, 103, 98]))
@@ -141,15 +307,7 @@ def prepopulate_synthetic_training_data():
         h2h_dominance = int(np.random.randint(-10, 10))
         home_goals = int(np.random.randint(0, 5))
         away_goals = int(np.random.randint(0, 5))
-        
-        # Result: 1 (Home Win), 0 (Draw), 2 (Away Win)
-        if home_goals > away_goals:
-            result = 1
-        elif away_goals > home_goals:
-            result = 2
-        else:
-            result = 0
-            
+        result = 1 if home_goals > away_goals else (2 if away_goals > home_goals else 0)
         mock_data.append({
             "fixture_id": int(2000000 + i),
             "league_id": league_id,
@@ -165,8 +323,23 @@ def prepopulate_synthetic_training_data():
             "away_goals": away_goals,
             "result": result
         })
-        
     save_training_data(mock_data)
+
+def prepopulate_real_historical_data():
+    """Attempts to pre-populate database with real historical data from football-data.co.uk, falling back to synthetic if needed."""
+    print("Pre-populating database with real historical data from football-data.co.uk...")
+    success = False
+    target_leagues = [113, 103, 253, 71, 128] # Sweden, Norway, MLS, Brazil, Argentina
+    for lid in target_leagues:
+        try:
+            if fetch_football_data_co_uk_historical(lid):
+                success = True
+        except Exception as e:
+            print(f"Failed to import real historical data for league {lid}: {e}")
+            
+    if not success:
+        print("Real historical data import failed completely. Falling back to synthetic mock data.")
+        prepopulate_synthetic_training_data()
 
 def fetch_training_data(api_key, league_ids):
     """
@@ -176,7 +349,7 @@ def fetch_training_data(api_key, league_ids):
     existing_df = load_training_data()
     
     if existing_df.empty:
-        prepopulate_synthetic_training_data()
+        prepopulate_real_historical_data()
         existing_df = load_training_data()
         
     # Progressive historical fetching is enabled by default (at most 1 league per run)

@@ -296,3 +296,21 @@ setInterval(() => {
     fetchPredictions();
     fetchTimeline();
 }, 300000);
+
+async function promptAdminAccess() {
+    const code = prompt("Enter the Admin Access Code:");
+    if (!code) return;
+    
+    try {
+        const response = await fetch(`${BACKEND_URL}/api/verify-admin-code?code=${encodeURIComponent(code)}`);
+        const data = await response.json();
+        if (data.status === "success") {
+            window.location.href = `${BACKEND_URL}/admin?token=${data.token}`;
+        } else {
+            alert(data.message || "Access Denied. Be gone, snooper!");
+        }
+    } catch (err) {
+        console.error("Access check failed:", err);
+        alert("A system error occurred. Access Denied.");
+    }
+}
