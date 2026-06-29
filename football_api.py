@@ -177,7 +177,15 @@ def get_prioritized_fixtures(date, api_key):
             print(f"Failed to fetch global fixtures. Status: {response.status_code}")
             return []
         
-        all_data = response.json().get("response", [])
+        res_json = response.json()
+        errors = res_json.get("errors")
+        warnings = res_json.get("warnings")
+        if errors:
+            print(f"API-Football Errors: {errors}")
+        if warnings:
+            print(f"API-Football Warnings: {warnings}")
+            
+        all_data = res_json.get("response", [])
         print(f"Found {len(all_data)} total matches globally today.")
         
         # Filter Tier 1
