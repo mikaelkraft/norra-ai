@@ -73,3 +73,16 @@
 * **Our Response & Implementation**:
   * Inspected [telegram_bot.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/telegram_bot.py) and verified that the `/today` command already queries the local database exclusively. There are no active API requests or scoreboard searches defined in the command handler.
   * Updated a leftover comment in [telegram_bot.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/telegram_bot.py) to clarify that live API fetching is disabled to protect quota limits.
+
+### Session Continuation (June 30, 2026 - 3:10 AM)
+* **User Request**: Redefine the app to remove API-Football dependencies (since the key was suspended again) and make room for FootyStats CSV data later.
+* **Our Response & Implementation**:
+  * Created and obtained approval on the [implementation plan](file:///C:/Users/HP/.gemini/antigravity-ide/brain/018e644d-1598-4354-8bfe-0536004d2885/implementation_plan.md) for database-driven prediction logic.
+  * Added `PlayedMatch` table in [database.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/database.py) with automatic database migrations on startup.
+  * Updated `fetch_football_data_co_uk_historical` in [prediction_model.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/prediction_model.py) to save raw match data, parse dates, handle both summer all-seasons CSVs and seasonal European leagues CSV files, and batch-save records.
+  * Added `update_current_season_matches` and a FootyStats placeholder function `import_footystats_csv`.
+  * Implemented local standings, form, H2H, and stats calculations in [prediction_model.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/prediction_model.py) querying `PlayedMatch` on the fly, completely bypassing API-Football.
+  * Built `standardize_team_name` and `find_db_team_name` fuzzy-matching engine to clean up ESPN team names and match them with local DB records.
+  * Updated `fetch_predictions()` and `generate_predictions()` in [Norra.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/Norra.py) to fetch fixtures using keyless ESPN Scoreboard API and convert them to the expected format.
+  * Updated outcome verification in [Norra.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/Norra.py) and startup validations in [app.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/app.py) to run completely offline without needing `FOOTBALL_API_KEY`.
+  * Created and successfully executed [verify_db_predictions.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/verify_db_predictions.py) test script. Replaced all emoji console log prints to prevent cp1252 Windows encoding errors.
