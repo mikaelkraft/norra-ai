@@ -41,6 +41,12 @@ nav {
     padding: 2rem 10%;
 }
 
+.nav-actions {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
 .logo {
     display: flex;
     align-items: center;
