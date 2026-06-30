@@ -125,32 +125,65 @@ def save_played_matches(records):
     finally:
         db.close()
 
+def load_cached_model():
+    """Loads scikit-learn models from a local pickle file if it is within the cache expiry limit."""
+    model_file = "model.pkl"
+    if not os.path.exists(model_file):
+        return None
+    try:
+        import time
+        import pickle
+        file_age_hours = (time.time() - os.path.getmtime(model_file)) / 3600
+        expiry_hours = float(os.getenv("MODEL_CACHE_EXPIRY_HOURS", "24"))
+        if file_age_hours > expiry_hours:
+            print(f"Cached model is {file_age_hours:.1f} hours old (expired > {expiry_hours} hours).")
+            return None
+        with open(model_file, "rb") as f:
+            model = pickle.load(f)
+        return model
+    except Exception as e:
+        print(f"Error loading cached model: {e}")
+        return None
+
+def save_cached_model(model):
+    """Saves trained scikit-learn models dictionary to a local pickle file."""
+    model_file = "model.pkl"
+    try:
+        import pickle
+        with open(model_file, "wb") as f:
+            pickle.dump(model, f)
+        print(f"Successfully cached model to {model_file}")
+    except Exception as e:
+        print(f"Error caching model: {e}")
+
 def load_training_data():
-    """Loads existing training data from the database for ML training (excluding IDs)."""
+    """Loads existing training data from the database for ML training, bypassing SQLAlchemy ORM overhead."""
     db = SessionLocal()
     try:
-        records = db.query(MatchTrainingData).all()
+        records = db.query(
+            MatchTrainingData.league_id,
+            MatchTrainingData.home_rank,
+            MatchTrainingData.away_rank,
+            MatchTrainingData.home_motivation,
+            MatchTrainingData.away_motivation,
+            MatchTrainingData.home_star_power,
+            MatchTrainingData.home_defensive_wall,
+            MatchTrainingData.h2h_dominance,
+            MatchTrainingData.home_advantage,
+            MatchTrainingData.home_goals,
+            MatchTrainingData.away_goals,
+            MatchTrainingData.result
+        ).all()
+        
         if not records:
             return pd.DataFrame()
         
-        data_list = []
-        for r in records:
-            data_list.append({
-                "league_id": r.league_id,
-                "home_rank": r.home_rank,
-                "away_rank": r.away_rank,
-                "home_motivation": r.home_motivation,
-                "away_motivation": r.away_motivation,
-                "home_star_power": r.home_star_power,
-                "home_defensive_wall": r.home_defensive_wall,
-                "h2h_dominance": r.h2h_dominance,
-                "home_advantage": r.home_advantage,
-                "home_goals": r.home_goals,
-                "away_goals": r.away_goals,
-                "result": r.result
-            })
-        
-        return pd.DataFrame(data_list)
+        columns = [
+            "league_id", "home_rank", "away_rank", "home_motivation", "away_motivation",
+            "home_star_power", "home_defensive_wall", "h2h_dominance", "home_advantage",
+            "home_goals", "away_goals", "result"
+        ]
+        return pd.DataFrame(records, columns=columns)
     except Exception as e:
         print(f"Error loading training data from database: {e}")
         return pd.DataFrame()
@@ -219,6 +252,16 @@ def fetch_football_data_co_uk_historical(league_id):
     records_to_insert = []
     played_records_to_insert = []
     
+    # Query existing PlayedMatch fixture IDs for this league to avoid redundant calculations/inserts
+    db = SessionLocal()
+    try:
+        existing_ids = set(val[0] for val in db.query(PlayedMatch.fixture_id).filter(PlayedMatch.league_id == league_id).all())
+    except Exception as e:
+        print(f"Error querying existing fixture IDs: {e}")
+        existing_ids = set()
+    finally:
+        db.close()
+        
     for index, row in enumerate(reader):
         season = row.get("Season")
         home_team = row.get("Home")
@@ -241,7 +284,13 @@ def fetch_football_data_co_uk_historical(league_id):
         except ValueError:
             continue
             
-        match_date = parse_date(date_str)
+        try:
+            season_int = int(float(season))
+        except ValueError:
+            season_int = 0
+            
+        fixture_id = int(f"{league_id}{season_int % 100}{index % 1000:03d}")
+        result = 1 if hg > ag else (2 if ag > hg else 0)
         
         if season not in standings:
             standings[season] = {}
@@ -252,6 +301,26 @@ def fetch_football_data_co_uk_historical(league_id):
             season_standings[home_team] = {"points": 0, "goals_scored": 0, "goals_conceded": 0, "matches_played": 0}
         if away_team not in season_standings:
             season_standings[away_team] = {"points": 0, "goals_scored": 0, "goals_conceded": 0, "matches_played": 0}
+            
+        # Incremental Skip: If match already exists, only update standings in-memory and skip feature engineering
+        if fixture_id in existing_ids:
+            season_standings[home_team]["matches_played"] += 1
+            season_standings[away_team]["matches_played"] += 1
+            season_standings[home_team]["goals_scored"] += hg
+            season_standings[home_team]["goals_conceded"] += ag
+            season_standings[away_team]["goals_scored"] += ag
+            season_standings[away_team]["goals_conceded"] += hg
+            
+            if result == 1:
+                season_standings[home_team]["points"] += 3
+            elif result == 2:
+                season_standings[away_team]["points"] += 3
+            else:
+                season_standings[home_team]["points"] += 1
+                season_standings[away_team]["points"] += 1
+            continue
+            
+        match_date = parse_date(date_str)
             
         # Determine Ranks BEFORE the match is played
         def get_rankings(st_dict):
@@ -286,17 +355,6 @@ def fetch_football_data_co_uk_historical(league_id):
             
         home_star = get_team_star_power(season_standings[home_team])
         home_def = get_team_defensive_wall(season_standings[home_team])
-        
-        # Result: 1 (Home Win), 0 (Draw), 2 (Away Win)
-        result = 1 if hg > ag else (2 if ag > hg else 0)
-        
-        try:
-            season_int = int(float(season))
-        except ValueError:
-            season_int = 0
-            
-        # Generate standard 32-bit signed integer ID: <league_id><season_2_digits><row_index_3_digits>
-        fixture_id = int(f"{league_id}{season_int % 100}{index % 1000:03d}")
         
         data_point = {
             "fixture_id": fixture_id,
@@ -346,7 +404,7 @@ def fetch_football_data_co_uk_historical(league_id):
     if records_to_insert:
         save_training_data(records_to_insert)
         save_played_matches(played_records_to_insert)
-        print(f"Successfully imported {len(records_to_insert)} historical matches for league ID {league_id}.")
+        print(f"Successfully imported {len(records_to_insert)} fresh matches for league ID {league_id}.")
         return True
     return False
 
@@ -579,29 +637,30 @@ def train_model(df):
     
     X = df.drop(columns=['result', 'home_goals', 'away_goals'])
     
+    # Optimize RandomForest parameters for low memory and high generalization (n_estimators=30, max_depth=6)
     # 1. Outcome Model (1: Home, 0: Draw, 2: Away)
     y_outcome = df['result']
-    outcome_model = RandomForestClassifier(n_estimators=100, random_state=42)
+    outcome_model = RandomForestClassifier(n_estimators=30, max_depth=6, random_state=42)
     outcome_model.fit(X, y_outcome)
     
     # 2. BTTS Model (1: Yes, 0: No)
     y_btts = ((df['home_goals'] > 0) & (df['away_goals'] > 0)).astype(int)
-    btts_model = RandomForestClassifier(n_estimators=100, random_state=42)
+    btts_model = RandomForestClassifier(n_estimators=30, max_depth=6, random_state=42)
     btts_model.fit(X, y_btts)
     
     # 3. Over 2.5 Goals Model
     y_ou25 = ((df['home_goals'] + df['away_goals']) > 2.5).astype(int)
-    ou25_model = RandomForestClassifier(n_estimators=100, random_state=42)
+    ou25_model = RandomForestClassifier(n_estimators=30, max_depth=6, random_state=42)
     ou25_model.fit(X, y_ou25)
     
     # 4. Over 1.5 Goals Model
     y_ou15 = ((df['home_goals'] + df['away_goals']) > 1.5).astype(int)
-    ou15_model = RandomForestClassifier(n_estimators=100, random_state=42)
+    ou15_model = RandomForestClassifier(n_estimators=30, max_depth=6, random_state=42)
     ou15_model.fit(X, y_ou15)
 
     # 5. Over 3.5 Goals Model
     y_ou35 = ((df['home_goals'] + df['away_goals']) > 3.5).astype(int)
-    ou35_model = RandomForestClassifier(n_estimators=100, random_state=42)
+    ou35_model = RandomForestClassifier(n_estimators=30, max_depth=6, random_state=42)
     ou35_model.fit(X, y_ou35)
 
     print("All Multi-Market Models trained successfully.")
@@ -1426,10 +1485,10 @@ def get_match_prediction(fixture, api_key, model=None):
         # Fallback defaults based on heuristics
         ml_confidence = 65.0
         ml_btts = "GG / Yes" if (home_def_wall + away_def_wall < 15) else "NG / No"
-        ml_dnb = "1 DNB" if "home" in outcome.lower() else ("2 DNB" if "away" in outcome.lower() else "1 DNB")
+        ml_dnb = "1 DNB" if home_name.lower() in outcome.lower() else ("2 DNB" if away_name.lower() in outcome.lower() else "1 DNB")
         ml_ou = "Over 2.5" if (home_def_wall + away_def_wall < 15) else "Under 2.5"
         ml_multi = "2-3 Goals" if "Over 2.5" in ml_ou else "1-2 Goals"
-        ml_combo = "1X & GG" if "home" in outcome.lower() else "X2 & Under 2.5"
+        ml_combo = "1X & GG" if home_name.lower() in outcome.lower() else "X2 & Under 2.5"
         ml_ht_ft = "Draw/Draw"
 
     confidence_str = f"{round(ml_confidence, 1)}%"
@@ -1437,7 +1496,7 @@ def get_match_prediction(fixture, api_key, model=None):
     return {
         "main": outcome,
         "confidence": confidence_str,
-        "dc": "1X / 2X" if "Draw" in outcome else ("Home/Draw" if "home" in outcome.lower() else "Away/Draw"),
+        "dc": "1X / X2" if "Draw" in outcome else ("1X" if home_name.lower() in outcome.lower() else "X2"),
         "ht": ht_result,
         "corners": calculate_corner_estimate(fixture_id, api_key),
         "ml": ml_outcome,

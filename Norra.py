@@ -93,14 +93,21 @@ def fetch_predictions(api_key=None, dry_run=False):
     except Exception as e:
         print(f"Failed to update active season matches: {e}")
 
-    # 3. Train the ML model on local DB data
+    # 3. Load or train the ML model on local DB data
     try:
-        from prediction_model import fetch_training_data, train_model
-        training_leagues = [l["league_id"] for l in leagues]
-        train_df = fetch_training_data(None, training_leagues)
-        model = train_model(train_df)
+        from prediction_model import load_cached_model, fetch_training_data, train_model, save_cached_model
+        model = load_cached_model()
+        if not model:
+            print("No cached model found or cache expired. Retraining model...")
+            training_leagues = [l["league_id"] for l in leagues]
+            train_df = fetch_training_data(None, training_leagues)
+            model = train_model(train_df)
+            if model:
+                save_cached_model(model)
+        else:
+            print("Loaded trained models successfully from local cache.")
     except Exception as e:
-        print(f"ML Training failed, falling back to rule-engine: {e}")
+        print(f"ML Training / Loading failed, falling back to rule-engine: {e}")
         model = None
 
     # 4. Convert ESPN fixtures to mock API-Football dictionary format
@@ -149,7 +156,7 @@ def fetch_predictions(api_key=None, dry_run=False):
     # 6. Post predictions to X
     post_predictions(predictions, dry_run=dry_run)
 
-def generate_dynamic_advice(home, away, detailed_data):
+def generate_dynamic_advice(home, away, detailed_data, short=False):
     outcome = detailed_data.get("main", "Draw / Very Close")
     confidence_str = detailed_data.get("confidence", "50%")
     try:
@@ -165,6 +172,11 @@ def generate_dynamic_advice(home, away, detailed_data):
     
     if "win" in outcome.lower():
         winner_team = home if ("home" in outcome.lower() or home.lower() in outcome.lower()) else away
+        if short:
+            if confidence >= 70.0:
+                return f"Pick: {winner_team} Win or {dnb}."
+            else:
+                return f"Safety: {dc} or Combo: {combos}."
         if confidence >= 80.0:
             return f"Ultra High Conviction: Straight win for {winner_team} is highly recommended. For safer play, select {winner_team} Draw No Bet ({dnb})."
         elif confidence >= 70.0:
@@ -172,6 +184,11 @@ def generate_dynamic_advice(home, away, detailed_data):
         else:
             return f"Moderate Conviction: Favors {winner_team} but stats show close margins. Safe selection: Double Chance {dc} or combo bet: {combos}."
     else:
+        if short:
+            if "over 2.5" in ou.lower() or "gg" in btts.lower():
+                return f"Goals: {ou} or BTTS ({btts})."
+            else:
+                return f"Defensive: {ou} or Double Chance {dc}."
         if "over 2.5" in ou.lower() or "gg" in btts.lower():
             return f"Close Match: Competitive draw risk. Best selections are in goals/GG markets: Over 1.5/2.5 goals ({ou}) or Both Teams to Score ({btts})."
         else:
@@ -384,7 +401,20 @@ def post_predictions(predictions, dry_run=False):
         det = data['detailed']
         heading = data['heading']
 
+        x_advice = generate_dynamic_advice(home, away, det, short=True)
+
+        # X Tweet Text (strictly compact, under 280 chars)
         tweet_text = (
+            f"🏆 NorraAI Pick: {home} vs {away}\n"
+            f"🔮 Pick: {winner} ({conf})\n"
+            f"🛡️ DC: {det['dc']} | 💎 Goals: {det['ou_refined']}\n"
+            f"🌟 Combo: {det['combos']}\n"
+            f"📣 Play: {x_advice}\n"
+            f"NorraAI"
+        )
+        
+        # Telegram Broadcast Text (rich, detailed formatting)
+        telegram_text = (
             f"{heading}\n"
             f"⚽ {home} vs {away}\n\n"
             f"🔮 Logic: {det['main']}\n"
@@ -436,17 +466,17 @@ def post_predictions(predictions, dry_run=False):
                         print(f"Prediction posted to X: {match}")
                     except Exception as x_err:
                         print(f"Auto-post to X failed: {x_err}")
-
+ 
                 # 2. Broadcast to Telegram
                 import telegram_bot
                 if telegram_bot.bot and telegram_bot.TELEGRAM_CHANNEL_ID:
                     try:
-                        telegram_bot.bot.send_message(telegram_bot.TELEGRAM_CHANNEL_ID, tweet_text, parse_mode="Markdown")
+                        telegram_bot.bot.send_message(telegram_bot.TELEGRAM_CHANNEL_ID, telegram_text, parse_mode="Markdown")
                         tg_posted = True
                         print(f"Prediction broadcast to Telegram: {match}")
                     except Exception as tg_err:
                         print(f"Auto-broadcast to Telegram failed: {tg_err}")
-
+ 
                 # 3. Always log to local timeline database!
                 db_session = SessionLocal()
                 try:
@@ -463,7 +493,7 @@ def post_predictions(predictions, dry_run=False):
                         tg_record = PostTimeline(
                             fixture_id=data['fixture_id'],
                             platform="Telegram",
-                            content=tweet_text
+                            content=telegram_text
                         )
                         db_session.add(tg_record)
                         

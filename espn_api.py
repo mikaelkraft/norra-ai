@@ -53,30 +53,31 @@ LEAGUE_MAPPING = {
 def fetch_espn_today_fixtures():
     """
     Fetches soccer matches for today across major ESPN leagues matching our Tier 1 and Tier 2 lists.
-    No API keys required.
+    No API keys required. Uses multi-threading to speed up API calls.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
     date_str = datetime.datetime.now().strftime("%Y%m%d")
     fixtures = []
     
-    print(f"Fetching free schedule from ESPN Scoreboard for date: {date_str}...")
+    print(f"Fetching free schedule from ESPN Scoreboard for date: {date_str} in parallel...")
     
-    for espn_code, api_football_id in LEAGUE_MAPPING.items():
+    def fetch_league(espn_code, api_football_id):
         url = f"https://site.api.espn.com/apis/site/v2/sports/soccer/{espn_code}/scoreboard?dates={date_str}"
         try:
-            res = requests.get(url, timeout=10)
+            res = requests.get(url, timeout=5)
             if res.status_code == 200:
                 events = res.json().get("events", [])
+                league_fixtures = []
                 for event in events:
                     competition = event.get('competitions', [{}])[0]
                     competitors = competition.get('competitors', [])
                     if len(competitors) < 2:
                         continue
                     
-                    # ESPN lists Home team typically at index 0 or checks home/away flag
                     home_team = next((c['team']['displayName'] for c in competitors if c.get('homeAway') == 'home'), competitors[0]['team']['displayName'])
                     away_team = next((c['team']['displayName'] for c in competitors if c.get('homeAway') == 'away'), competitors[1]['team']['displayName'])
                     
-                    fixtures.append({
+                    league_fixtures.append({
                         "home": home_team,
                         "away": away_team,
                         "espn_league": espn_code,
@@ -85,9 +86,16 @@ def fetch_espn_today_fixtures():
                         "status": event.get('status', {}).get('type', {}).get('description', 'Scheduled'),
                         "name": f"{home_team} vs {away_team}"
                     })
-        except Exception as e:
-            # Silently catch so one league failing doesn't block the rest
+                return league_fixtures
+        except Exception:
             pass
+        return []
+
+    # Use 15 concurrent threads to fetch from ESPN's scoreboard CDN rapidly
+    with ThreadPoolExecutor(max_workers=15) as executor:
+        futures = {executor.submit(fetch_league, espn_code, api_football_id): espn_code for espn_code, api_football_id in LEAGUE_MAPPING.items()}
+        for future in as_completed(futures):
+            fixtures.extend(future.result())
             
     print(f"ESPN Scoreboard: Found {len(fixtures)} matches matching prioritized tiers today.")
     return fixtures

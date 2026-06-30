@@ -69,6 +69,27 @@ def main():
     model = train_model(train_df)
     print("[SUCCESS] Model trained successfully.")
     
+    # 4.5 Test Model Cache (Pickle)
+    print("\n[Step 4.5] Testing Model Cache (Pickling)...")
+    from prediction_model import save_cached_model, load_cached_model
+    try:
+        # Remove any existing cache file
+        if os.path.exists("model.pkl"):
+            os.remove("model.pkl")
+            
+        save_cached_model(model)
+        if not os.path.exists("model.pkl"):
+            raise FileNotFoundError("model.pkl was not created on disk.")
+            
+        loaded_model = load_cached_model()
+        if not loaded_model:
+            raise ValueError("Failed to load cached model from disk.")
+            
+        print("[SUCCESS] Model caching and loading verified successfully!")
+    except Exception as cache_err:
+        print(f"[FAIL] Model caching failed: {cache_err}")
+        sys.exit(1)
+    
     # 5. Test get_match_prediction with a mock fixture
     print("\n[Step 5] Testing prediction generation with a mock fixture...")
     try:

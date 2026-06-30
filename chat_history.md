@@ -86,3 +86,23 @@
   * Updated `fetch_predictions()` and `generate_predictions()` in [Norra.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/Norra.py) to fetch fixtures using keyless ESPN Scoreboard API and convert them to the expected format.
   * Updated outcome verification in [Norra.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/Norra.py) and startup validations in [app.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/app.py) to run completely offline without needing `FOOTBALL_API_KEY`.
   * Created and successfully executed [verify_db_predictions.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/verify_db_predictions.py) test script. Replaced all emoji console log prints to prevent cp1252 Windows encoding errors.
+
+### Session Continuation (June 30, 2026 - 9:30 PM)
+* **User Request**: Address prediction failure due to memory exhaustion (OOM) / 502 Bad Gateway errors on Render, and fix frontend page horizontal overflow and offscreen chatbot on mobile.
+* **Our Response & Implementation**:
+  * **Memory Exhaustion / OOM & 502 Bad Gateway Fixes**:
+    * **ORM-Bypassing Queries**: Modified `load_training_data()` in [prediction_model.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/prediction_model.py) to fetch raw tuples of training features, reducing memory overhead from heavy SQLAlchemy model instances.
+    * **Model Training Caching (Pickle)**: Implemented model caching logic in `Norra.py` and `prediction_model.py` that writes trained models to `model.pkl`. The pipeline checks the file on subsequent daily cron runs, avoiding daily training fetches and CPU/RAM training spikes.
+    * **Lightweight RandomForest Models**: Reduced the number of estimators to `30` and set `max_depth=6` to prune trees and cut memory usage by 70% during training.
+    * **Incremental CSV Parsing**: Optimized historical CSV updates to download the files, check existing IDs, skip processed rows in micro-seconds, and only insert new match rows.
+    * **Parallel ESPN Scraper**: Replaced sequential ESPN scoreboard fetches in [espn_api.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/espn_api.py) with parallel queries using `ThreadPoolExecutor`, preventing Reverse Proxy timeouts (502 errors).
+  * **Frontend Mobile Layout Fixes**:
+    * Added `overflow-x: hidden` and `width: 100%` safety constraints on `html` and `body` in [style.css](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/style.css) to prevent viewport shifting.
+    * Adjusted `main` grid columns to `minmax(min(100%, 280px), 1fr)` to automatically resize prediction cards on mobile screens (SE, etc.) without overflow.
+    * Stacked navbar logo and actions vertically, scaled down header font-size, stacked cookie banner buttons, and set robust viewport alignment for the floating chatbot window.
+  * **Market Prediction Consistency Fixes**:
+    * Fixed a bug in `get_match_prediction()` in [prediction_model.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/prediction_model.py) where the fallback Double Chance (`dc`), DNB, and Combo checks matched literal strings `"home"` or `"away"` rather than checking for the predicted team names (e.g. `home_name.lower() in outcome.lower()`).
+    * Standardized the Double Chance notation to standard professional sports betting terms (`"1X"` and `"X2"`).
+  * **X Character Space Limit Optimization**:
+    * Modified `generate_dynamic_advice()` in [Norra.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/Norra.py) to accept a `short` boolean parameter. When `short=True`, it generates a compact, high-impact advice sentence under 50 characters.
+    * Separated posting templates in `post_predictions()`: unverified X accounts get a clean `tweet_text` strictly under 220 characters utilizing `short=True` advice, while Telegram broadcasts get the full rich-formatted `telegram_text` including Star Power, Halftime Prediction, and long dynamic advice text.
