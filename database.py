@@ -95,12 +95,12 @@ class PostTimeline(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
-    # Check and migrate schema for existing databases
-    from sqlalchemy import text
+    # Check and migrate schema for existing databases in a dialect-agnostic way
+    from sqlalchemy import inspect, text
     db = SessionLocal()
     try:
-        cursor = db.execute(text("PRAGMA table_info(predictions);"))
-        columns = [row[1] for row in cursor.fetchall()]
+        inspector = inspect(db.bind)
+        columns = [col["name"] for col in inspector.get_columns("predictions")]
         if "league_avg_goals" not in columns:
             print("Migration: Adding 'league_avg_goals' column to 'predictions' table...")
             db.execute(text("ALTER TABLE predictions ADD COLUMN league_avg_goals FLOAT;"))
