@@ -641,13 +641,19 @@ def calculate_player_star_power(team_id, league_id, season, api_key):
         scorers = get_top_scorers(league_id, season, api_key)
         ANALYTICAL_CACHE["scorers"][key] = scorers
         
-    if not scorers: return 0
+    if not scorers or not isinstance(scorers, list): return 0
     
     # Check if any player from this team is in the top 10 scorers
     top_scorers_count = 0
     for player_entry in scorers[:10]:
-        if player_entry.get('statistics', [{}])[0].get('team', {}).get('id') == team_id:
-            top_scorers_count += 1
+        try:
+            stats_list = player_entry.get('statistics')
+            if stats_list and isinstance(stats_list, list):
+                team_id_val = stats_list[0].get('team', {}).get('id')
+                if team_id_val == team_id:
+                    top_scorers_count += 1
+        except:
+            pass
             
     return min(top_scorers_count * 5, 15)
 
@@ -775,10 +781,14 @@ def calculate_defensive_wall(team_id, league_id, season, api_key):
         stats = get_team_statistics(league_id, season, team_id, api_key)
         ANALYTICAL_CACHE["stats"][key] = stats
         
-    if not stats: return 10
+    if not stats or not isinstance(stats, dict): return 10
     
-    clean_sheets = stats.get('response', {}).get('clean_sheet', {}).get('total', 0)
-    games_played = stats.get('response', {}).get('fixtures', {}).get('played', {}).get('total', 1)
+    response_data = stats.get('response')
+    if not response_data or not isinstance(response_data, dict):
+        return 10
+        
+    clean_sheets = response_data.get('clean_sheet', {}).get('total', 0)
+    games_played = response_data.get('fixtures', {}).get('played', {}).get('total', 1) or 1
     
     ratio = (clean_sheets / games_played) * 20
     return min(ratio, 20)

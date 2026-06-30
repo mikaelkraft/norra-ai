@@ -435,81 +435,11 @@ def search_predict(query: str, db: Session = Depends(database.get_db)):
             }
         }
         
-    # 2. If not, fetch today's combined scoreboard to see if the match is scheduled
-    import espn_api
-    fixtures = espn_api.fetch_combined_today_fixtures()
-    match = None
-    for f in fixtures:
-        if query in f["home"].lower() or query in f["away"].lower():
-            match = f
-            break
-            
-    if not match:
-        raise HTTPException(status_code=404, detail="No active match for this team scheduled today on global scoreboards.")
-        
-    # 3. Match found! Get details and generate prediction from API-Football
-    api_key = os.getenv("FOOTBALL_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="FOOTBALL_API_KEY env variable not configured on server.")
-        
-    # Find matching fixture ID from API-Football for this specific date and league
-    from football_api import get_fixtures
-    from Norra import generate_predictions, post_predictions
-    import datetime
-    
-    today_date = datetime.datetime.now().date()
-    api_fixtures = get_fixtures(api_key, league_id=match["league_id"], date=today_date)
-    
-    target_fixture = None
-    for af in api_fixtures:
-        af_home = af['teams']['home']['name'].lower()
-        af_away = af['teams']['away']['name'].lower()
-        if query in af_home or query in af_away:
-            target_fixture = af
-            break
-            
-    if not target_fixture:
-        raise HTTPException(status_code=404, detail="Match scheduled, but details could not be resolved at this time.")
-        
-    # Generate prediction using RandomForestClassifier
-    model = None
-    try:
-        from prediction_model import load_training_data, train_model
-        train_df = load_training_data()
-        if not train_df.empty:
-            model = train_model(train_df)
-    except Exception as e:
-        print(f"Failed to load/train model on-demand: {e}")
-        
-    predictions_dict = generate_predictions([target_fixture], api_key, model=model)
-    
-    # Save/Post prediction (dry_run=False)
-    post_predictions(predictions_dict, dry_run=False)
-    
-    # Reload from DB
-    new_pred = db.query(database.Prediction).filter(database.Prediction.fixture_id == target_fixture['fixture']['id']).first()
-    if new_pred:
-        return {
-            "status": "generated",
-            "prediction": {
-                "fixture_id": new_pred.fixture_id,
-                "home": new_pred.home_team,
-                "away": new_pred.away_team,
-                "league": new_pred.league_name,
-                "main": new_pred.prediction_main,
-                "conf": new_pred.confidence,
-                "dc": new_pred.dc,
-                "ht": new_pred.ht,
-                "ou_refined": new_pred.ou_refined,
-                "btts": new_pred.btts,
-                "dnb": new_pred.dnb,
-                "combos": new_pred.combos,
-                "stars": new_pred.star_power,
-                "date": new_pred.created_at.strftime("%Y-%m-%d %H:%M")
-            }
-        }
-    
-    raise HTTPException(status_code=500, detail="Failed to persist the generated prediction.")
+    # 2. If not found, safely return a 404 to avoid live API lookup / abuse
+    raise HTTPException(
+        status_code=404, 
+        detail=f"No active predictions found for '{query.capitalize()}' in our database. Predictions are generated daily by our automated system."
+    )
 
 @app.post("/api/chat")
 def chat_bot(message: str, db: Session = Depends(database.get_db)):
@@ -563,71 +493,13 @@ def chat_bot(message: str, db: Session = Depends(database.get_db)):
                     )
                 }
                 
-            # 2. Try live on-demand generation using free ESPN/SportsDB combined schedule cache
-            try:
-                import espn_api
-                fixtures = espn_api.fetch_combined_today_fixtures()
-                match = None
-                for f in fixtures:
-                    if word in f["home"].lower() or word in f["away"].lower():
-                        match = f
-                        break
-                        
-                if match:
-                    api_key = os.getenv("FOOTBALL_API_KEY")
-                    if api_key:
-                        from football_api import get_fixtures
-                        from Norra import generate_predictions, post_predictions
-                        import datetime
-                        
-                        today_date = datetime.datetime.now().date()
-                        api_fixtures = get_fixtures(api_key, league_id=match["league_id"], date=today_date)
-                        
-                        target_fixture = None
-                        for af in api_fixtures:
-                            if word in af['teams']['home']['name'].lower() or word in af['teams']['away']['name'].lower():
-                                target_fixture = af
-                                break
-                                
-                        if target_fixture:
-                            # Generate on-demand using ML model
-                            model = None
-                            try:
-                                from prediction_model import load_training_data, train_model
-                                train_df = load_training_data()
-                                if not train_df.empty:
-                                    model = train_model(train_df)
-                            except:
-                                pass
-                                
-                            predictions_dict = generate_predictions([target_fixture], api_key, model=model)
-                            post_predictions(predictions_dict, dry_run=False)
-                            
-                            # Fetch again from DB
-                            new_pred = db.query(database.Prediction).filter(
-                                database.Prediction.fixture_id == target_fixture['fixture']['id']
-                            ).first()
-                            
-                            if new_pred:
-                                return {
-                                    "response": (
-                                        f"🎯 Found live schedule and generated prediction for {new_pred.home_team} vs {new_pred.away_team} ({new_pred.league_name}):\n"
-                                        f"• Predicted Outcome: {new_pred.prediction_main} (Confidence: {new_pred.confidence})\n"
-                                        f"• Double Chance: {new_pred.dc} | Draw No Bet: {new_pred.dnb}\n"
-                                        f"• Goals: {new_pred.ou_refined} | BTTS: {new_pred.btts}\n"
-                                        f"• Combo Bet: {new_pred.combos}"
-                                    )
-                                }
-            except Exception as e:
-                print(f"Chatbot on-demand prediction lookup error: {e}")
-        
-        # If words were searched but no prediction could be found/generated:
+        # If not found in the database, safely inform the user to prevent active API calls/abuse
         searched_teams = ", ".join([w.capitalize() for w in words[:3]])
         return {
             "response": (
-                f"I checked today's global scoreboards but couldn't find a match scheduled for '{searched_teams}' today. "
-                "Norra AI only processes and predicts matches on the day of the game. "
-                "Please check back on matchday, or ask about another team playing today!"
+                f"I couldn't find any active predictions for '{searched_teams}' in my database right now. "
+                "Predictions are generated daily by our automated system. "
+                "Please check the main dashboard on the homepage to see today's active fixtures, or check back later when predictions are updated!"
             )
         }
         

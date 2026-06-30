@@ -119,23 +119,29 @@ def generate_predictions(fixtures, api_key, model=None):
         
         if api_preds:
             p = api_preds[0]
-            advice = p.get('predictions', {}).get('advice', advice)
-            winner = p.get('predictions', {}).get('winner', {}).get('name', winner)
-            win_odds = p.get('predictions', {}).get('percent', {})
+            preds_dict = p.get('predictions') or {}
+            advice = preds_dict.get('advice') or advice
+            
+            winner_dict = preds_dict.get('winner') or {}
+            winner = winner_dict.get('name') or winner
+            
+            win_odds = preds_dict.get('percent') or {}
             
             # Pick the highest % for confidence
-            winner_key = p.get('predictions', {}).get('winner', {}).get('comment', 'home').lower()
+            winner_comment = winner_dict.get('comment') or 'home'
+            winner_key = str(winner_comment).lower()
             if 'home' in winner_key: winner = home_team
             elif 'away' in winner_key: winner = away_team
             
-            conf = win_odds.get(winner_key if winner_key in win_odds else 'home', '50%')
+            conf = win_odds.get(winner_key if winner_key in win_odds else 'home') or '50%'
 
-            # NEW: Extract BTTS (GG) and Over/Under
-            btts = p.get('predictions', {}).get('btts', None)
-            over_under = p.get('predictions', {}).get('goals', {}).get('over', None)
+            # Extract BTTS (GG) and Over/Under
+            btts = preds_dict.get('btts', None)
+            goals_dict = preds_dict.get('goals') or {}
+            over_under = goals_dict.get('over', None)
             
             gg_outcome = "GG" if btts is True else ("NG" if btts is False else "N/A")
-            ou_outcome = f"Over 2.5" if over_under else "Under 2.5" # Simplified
+            ou_outcome = "Over 2.5" if over_under else "Under 2.5"
         else:
             gg_outcome = "N/A"
             ou_outcome = "N/A"
