@@ -61,6 +61,20 @@ class MatchTrainingData(Base):
     result = Column(Integer)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
+class PlayedMatch(Base):
+    __tablename__ = "played_matches"
+
+    id = Column(Integer, primary_key=True, index=True)
+    fixture_id = Column(Integer, unique=True, index=True)
+    league_id = Column(Integer, index=True)
+    season = Column(String)
+    match_date = Column(DateTime)
+    home_team = Column(String, index=True)
+    away_team = Column(String, index=True)
+    home_goals = Column(Integer)
+    away_goals = Column(Integer)
+    created_at = Column(DateTime, default=datetime.datetime.utcnow)
+
 class BotStats(Base):
     __tablename__ = "bot_stats"
 
@@ -81,6 +95,20 @@ class PostTimeline(Base):
 
 def init_db():
     Base.metadata.create_all(bind=engine)
+    # Check and migrate schema for existing databases
+    from sqlalchemy import text
+    db = SessionLocal()
+    try:
+        cursor = db.execute(text("PRAGMA table_info(predictions);"))
+        columns = [row[1] for row in cursor.fetchall()]
+        if "league_avg_goals" not in columns:
+            print("Migration: Adding 'league_avg_goals' column to 'predictions' table...")
+            db.execute(text("ALTER TABLE predictions ADD COLUMN league_avg_goals FLOAT;"))
+            db.commit()
+    except Exception as e:
+        print(f"Migration error: {e}")
+    finally:
+        db.close()
 
 def get_db():
     db = SessionLocal()

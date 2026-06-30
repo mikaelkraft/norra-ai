@@ -10,7 +10,7 @@ import datetime
 import os
 from dotenv import load_dotenv
 from football_api import get_fixtures
-from database import SessionLocal, MatchTrainingData
+from database import SessionLocal, MatchTrainingData, PlayedMatch
 
 load_dotenv()
 
@@ -91,6 +91,40 @@ def save_training_data(df_or_list):
     finally:
         db.close()
 
+def save_played_matches(records):
+    """Saves played matches to the database, skipping duplicates by fixture_id."""
+    if not records:
+        return
+    db = SessionLocal()
+    try:
+        existing_ids = set(val[0] for val in db.query(PlayedMatch.fixture_id).all())
+        new_records = []
+        for r in records:
+            if "fixture_id" not in r:
+                continue
+            if r["fixture_id"] in existing_ids:
+                continue
+            new_records.append({
+                "fixture_id": r["fixture_id"],
+                "league_id": r["league_id"],
+                "season": r["season"],
+                "match_date": r["match_date"],
+                "home_team": r["home_team"],
+                "away_team": r["away_team"],
+                "home_goals": r["home_goals"],
+                "away_goals": r["away_goals"]
+            })
+            existing_ids.add(r["fixture_id"])
+        if new_records:
+            db.bulk_insert_mappings(PlayedMatch, new_records)
+            db.commit()
+            print(f"Saved {len(new_records)} new played match records to the database.")
+    except Exception as e:
+        db.rollback()
+        print(f"Error saving played matches to database: {e}")
+    finally:
+        db.close()
+
 def load_training_data():
     """Loads existing training data from the database for ML training (excluding IDs)."""
     db = SessionLocal()
@@ -122,6 +156,16 @@ def load_training_data():
         return pd.DataFrame()
     finally:
         db.close()
+
+def parse_date(date_str):
+    if not date_str:
+        return datetime.datetime.utcnow()
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d/%m/%Y %H:%M", "%d/%m/%y %H:%M"):
+        try:
+            return datetime.datetime.strptime(date_str.strip(), fmt)
+        except ValueError:
+            pass
+    return datetime.datetime.utcnow()
 
 def fetch_football_data_co_uk_historical(league_id):
     """
@@ -173,6 +217,7 @@ def fetch_football_data_co_uk_historical(league_id):
     # standings[season][team_name] = {"points": 0, "goals_scored": 0, "goals_conceded": 0, "matches_played": 0}
     standings = {}
     records_to_insert = []
+    played_records_to_insert = []
     
     for index, row in enumerate(reader):
         season = row.get("Season")
@@ -185,6 +230,7 @@ def fetch_football_data_co_uk_historical(league_id):
         hg_str = row.get("HG")
         ag_str = row.get("AG")
         res = row.get("Res")
+        date_str = row.get("Date")
         
         if hg_str is None or ag_str is None or res is None:
             continue
@@ -195,6 +241,8 @@ def fetch_football_data_co_uk_historical(league_id):
         except ValueError:
             continue
             
+        match_date = parse_date(date_str)
+        
         if season not in standings:
             standings[season] = {}
             
@@ -267,6 +315,18 @@ def fetch_football_data_co_uk_historical(league_id):
         }
         records_to_insert.append(data_point)
         
+        played_point = {
+            "fixture_id": fixture_id,
+            "league_id": league_id,
+            "season": str(season),
+            "match_date": match_date,
+            "home_team": home_team,
+            "away_team": away_team,
+            "home_goals": hg,
+            "away_goals": ag
+        }
+        played_records_to_insert.append(played_point)
+        
         # Update standings with this match's results
         season_standings[home_team]["matches_played"] += 1
         season_standings[away_team]["matches_played"] += 1
@@ -285,8 +345,35 @@ def fetch_football_data_co_uk_historical(league_id):
             
     if records_to_insert:
         save_training_data(records_to_insert)
+        save_played_matches(played_records_to_insert)
         print(f"Successfully imported {len(records_to_insert)} historical matches for league ID {league_id}.")
         return True
+    return False
+
+def update_current_season_matches():
+    """Loops over all mapped leagues and pulls down current match results from football-data.co.uk."""
+    print("Running daily check for current season match updates...")
+    target_leagues = [
+        113, 103, 253, 71, 128, # Sweden, Norway, MLS, Brazil, Argentina
+        39, 140, 135, 78, 61, 88 # EPL, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie
+    ]
+    updated_count = 0
+    for lid in target_leagues:
+        try:
+            if fetch_football_data_co_uk_historical(lid):
+                updated_count += 1
+        except Exception as e:
+            print(f"Failed to update matches for league {lid}: {e}")
+    print(f"Update sequence complete. Updated {updated_count}/{len(target_leagues)} leagues.")
+
+def import_footystats_csv(csv_filepath_or_url):
+    """
+    Placeholder function for future FootyStats premium CSV integration.
+    Parses a FootyStats CSV export containing played matches, standardizes fields,
+    and imports them into the played_matches database table.
+    """
+    print(f"FootyStats Importer: Placeholder function called with {csv_filepath_or_url}.")
+    print("To integrate FootyStats, implement columns mappings: 'date_unix' -> match_date, 'home_team_name' -> home_team, etc.")
     return False
 
 def prepopulate_synthetic_training_data():
@@ -389,14 +476,12 @@ def fetch_training_data(api_key, league_ids):
             break
             
         print(f"Progressive Fetch: Fetching fresh training context for League {league_id} (Current: {current_count})...")
-        fetched_this_run += 1  # Count the attempt
+        fetched_this_run += 1
         
-        # Fetch all fixtures for the last completed season (2025) in one call (very API efficient)
-        fixtures_data = get_fixtures(api_key, league_id=league_id, season=2025)
-        if fixtures_data:
-            league_data = process_fixtures_data(fixtures_data, api_key)
-            if league_data:
-                save_training_data(league_data)
+        try:
+            fetch_football_data_co_uk_historical(league_id)
+        except Exception as e:
+            print(f"Progressive Fetch failed for league {league_id}: {e}")
     
     # Reload full wholesome dataset
     return load_training_data()
@@ -852,7 +937,7 @@ def calculate_surface_impact(venue_surface, team_usual_surface="grass"):
     """
     if not venue_surface: return 0
     if "artificial" in venue_surface.lower() and team_usual_surface == "grass":
-        return -10 # "Turf Discomfort" penalty
+        return -10
     return 0
 
 def calculate_travel_stress(league_id, is_away):
@@ -860,31 +945,10 @@ def calculate_travel_stress(league_id, is_away):
     Heuristic for travel fatigue in Continental leagues.
     """
     if not is_away: return 0
-    continental_leagues = [2, 3, 848, 6] # UCL, UEL, UECL, AFCON
+    continental_leagues = [2, 3, 848, 6]
     if league_id in continental_leagues:
-        return -12 # High travel stress
-    return -5 # Standard domestic travel stress
-
-def calculate_poisson_score(fixture_id, api_key):
-    """
-    Leverages API-Sports mathematical modeling.
-    Returns a score comparison (-15 to 15).
-    """
-    from football_api import get_predictions
-    preds = get_predictions(fixture_id, api_key)
-    if not preds: return 0
-    
-    try:
-        comparison = preds[0].get('comparison', {})
-        # Comparison scores are percentages (e.g. 50% vs 50%)
-        # We look specifically at the 'total' or 'poisson' if available
-        home_cm = float(comparison.get('total', {}).get('home', '50%').replace('%',''))
-        away_cm = float(comparison.get('total', {}).get('away', '50%').replace('%',''))
-        
-        diff = home_cm - away_cm
-        return (diff / 100) * 15 # Normalize to our scoring range
-    except:
-        return 0
+        return -12
+    return -5
 
 def calculate_derby_coefficient(fixture):
     """
@@ -893,7 +957,6 @@ def calculate_derby_coefficient(fixture):
     home_name = fixture['teams']['home']['name']
     away_name = fixture['teams']['away']['name']
     
-    # Heuristic: Common city names or historical pairs
     derby_pairs = [
         ("Arsenal", "Tottenham"), ("Manchester City", "Manchester United"),
         ("Liverpool", "Everton"), ("Real Madrid", "Atletico Madrid"),
@@ -905,7 +968,6 @@ def calculate_derby_coefficient(fixture):
         if (p1 in home_name and p2 in away_name) or (p1 in away_name and p2 in home_name):
             return True
             
-    # City matching (e.g. "Madrid", "London" - though London has too many)
     cities = ["Madrid", "Manchester", "Liverpool", "Milan", "Roma", "Glasgow", "Lisbon", "Sevilla"]
     for city in cities:
         if city in home_name and city in away_name:
@@ -913,36 +975,279 @@ def calculate_derby_coefficient(fixture):
             
     return False
 
+def standardize_team_name(name):
+    if not name:
+        return ""
+    n = name.lower().strip()
+    suffixes = [
+        "fc", "fk", "ac", "sc", "rc", "afc", "cf", "ud", "cd",
+        "united", "city", "town", "rovers", "wanderers", "athletic", 
+        "hotspur", "hotspurs", "albion", "solna", "ff", "if", "ifs", "ab", "s.c.", "f.c."
+    ]
+    words = n.split()
+    cleaned_words = [w for w in words if w not in suffixes]
+    return " ".join(cleaned_words)
+
+def find_db_team_name(espn_name, league_id):
+    """Finds the closest team name matching espn_name in the played_matches database for that league."""
+    db = SessionLocal()
+    try:
+        home_teams = db.query(PlayedMatch.home_team).filter(PlayedMatch.league_id == league_id).distinct().all()
+        away_teams = db.query(PlayedMatch.away_team).filter(PlayedMatch.league_id == league_id).distinct().all()
+        db_teams = set([t[0] for t in home_teams if t[0]] + [t[0] for t in away_teams if t[0]])
+        
+        if not db_teams:
+            return espn_name
+            
+        espn_clean = standardize_team_name(espn_name)
+        
+        for db_t in db_teams:
+            if db_t.lower().strip() == espn_name.lower().strip():
+                return db_t
+                
+        for db_t in db_teams:
+            if standardize_team_name(db_t) == espn_clean:
+                return db_t
+                
+        for db_t in db_teams:
+            db_clean = standardize_team_name(db_t)
+            if espn_clean in db_clean or db_clean in espn_clean:
+                return db_t
+                
+        synonyms = {
+            "manchester united": "man united",
+            "manchester city": "man city",
+            "tottenham hotspur": "tottenham",
+            "west ham united": "west ham",
+            "inter milan": "inter",
+            "ac milan": "milan",
+            "real betis": "betis",
+            "real sociedad": "sociedad",
+            "athletic bilbao": "bilbao",
+            "sporting lisbon": "sporting cp"
+        }
+        for k, v in synonyms.items():
+            if espn_clean == k and v in [t.lower() for t in db_teams]:
+                return next(t for t in db_teams if t.lower() == v)
+            if espn_clean == v and k in [t.lower() for t in db_teams]:
+                return next(t for t in db_teams if t.lower() == k)
+                
+        return espn_name
+    except Exception as e:
+        print(f"Error matching team name '{espn_name}': {e}")
+        return espn_name
+    finally:
+        db.close()
+
+def get_local_standings(league_id, season):
+    """Calculates team rankings dynamically from played_matches table."""
+    db = SessionLocal()
+    try:
+        matches = db.query(PlayedMatch).filter(
+            PlayedMatch.league_id == league_id,
+            PlayedMatch.season == str(season)
+        ).all()
+        
+        standings = {}
+        for m in matches:
+            h = m.home_team
+            a = m.away_team
+            hg = m.home_goals
+            ag = m.away_goals
+            
+            if h not in standings:
+                standings[h] = {"points": 0, "goals_scored": 0, "goals_conceded": 0, "matches_played": 0}
+            if a not in standings:
+                standings[a] = {"points": 0, "goals_scored": 0, "goals_conceded": 0, "matches_played": 0}
+                
+            standings[h]["matches_played"] += 1
+            standings[a]["matches_played"] += 1
+            standings[h]["goals_scored"] += hg
+            standings[h]["goals_conceded"] += ag
+            standings[a]["goals_scored"] += ag
+            standings[a]["goals_conceded"] += hg
+            
+            if hg > ag:
+                standings[h]["points"] += 3
+            elif ag > hg:
+                standings[a]["points"] += 3
+            else:
+                standings[h]["points"] += 1
+                standings[a]["points"] += 1
+                
+        def sort_key(item):
+            team, stats = item
+            gd = stats["goals_scored"] - stats["goals_conceded"]
+            return (stats["points"], gd, stats["goals_scored"])
+            
+        sorted_teams = sorted(standings.items(), key=sort_key, reverse=True)
+        ranks = {team: rank + 1 for rank, (team, _) in enumerate(sorted_teams)}
+        return ranks
+    except Exception as e:
+        print(f"Error calculating local standings: {e}")
+        return {}
+    finally:
+        db.close()
+
+def get_local_form(team_name, league_id, count=5):
+    """Calculates form points (0-100) based on the last 'count' games in the database."""
+    db = SessionLocal()
+    try:
+        matches = db.query(PlayedMatch).filter(
+            PlayedMatch.league_id == league_id,
+            (PlayedMatch.home_team == team_name) | (PlayedMatch.away_team == team_name)
+        ).order_by(PlayedMatch.match_date.desc()).limit(count).all()
+        
+        if not matches:
+            return 50
+            
+        score = 0
+        for m in matches:
+            is_home = m.home_team == team_name
+            hg = m.home_goals
+            ag = m.away_goals
+            
+            if hg == ag:
+                score += 10
+            elif is_home and hg > ag:
+                score += 20
+            elif not is_home and ag > hg:
+                score += 20
+                
+        max_possible = count * 20
+        return int((score / max_possible) * 100)
+    except Exception as e:
+        print(f"Error calculating local form for {team_name}: {e}")
+        return 50
+    finally:
+        db.close()
+
+def get_local_h2h(home_team, away_team, league_id):
+    """Analyzes last 10 H2H results from the local database played_matches table."""
+    db = SessionLocal()
+    try:
+        matches = db.query(PlayedMatch).filter(
+            PlayedMatch.league_id == league_id,
+            (
+                ((PlayedMatch.home_team == home_team) & (PlayedMatch.away_team == away_team)) |
+                ((PlayedMatch.home_team == away_team) & (PlayedMatch.away_team == home_team))
+            )
+        ).order_by(PlayedMatch.match_date.desc()).limit(10).all()
+        
+        if not matches:
+            return 0
+            
+        home_wins = 0
+        away_wins = 0
+        for m in matches:
+            hg = m.home_goals
+            ag = m.away_goals
+            
+            if hg > ag:
+                winner = m.home_team
+            elif ag > hg:
+                winner = m.away_team
+            else:
+                winner = None
+                
+            if winner == home_team:
+                home_wins += 1
+            elif winner == away_team:
+                away_wins += 1
+                
+        diff = home_wins - away_wins
+        return diff * 3
+    except Exception as e:
+        print(f"Error calculating local H2H for {home_team} vs {away_team}: {e}")
+        return 0
+    finally:
+        db.close()
+
+def get_local_team_stats(team_name, league_id, season):
+    """Calculates star power and defensive wall scores from local played_matches table."""
+    db = SessionLocal()
+    try:
+        matches = db.query(PlayedMatch).filter(
+            PlayedMatch.league_id == league_id,
+            PlayedMatch.season == str(season),
+            ((PlayedMatch.home_team == team_name) | (PlayedMatch.away_team == team_name))
+        ).all()
+        
+        if not matches:
+            try:
+                season_clean = season.split("/")[0]
+                prev_season = f"{int(season_clean)-1}/{season_clean}" if "/" in season else str(int(season_clean)-1)
+                matches = db.query(PlayedMatch).filter(
+                    PlayedMatch.league_id == league_id,
+                    PlayedMatch.season == prev_season,
+                    ((PlayedMatch.home_team == team_name) | (PlayedMatch.away_team == team_name))
+                ).all()
+            except:
+                pass
+                
+        if not matches:
+            return 5.0, 5.0
+            
+        goals_scored = 0
+        goals_conceded = 0
+        mp = len(matches)
+        
+        for m in matches:
+            is_home = m.home_team == team_name
+            hg = m.home_goals
+            ag = m.away_goals
+            
+            if is_home:
+                goals_scored += hg
+                goals_conceded += ag
+            else:
+                goals_scored += ag
+                goals_conceded += hg
+                
+        avg_scored = goals_scored / mp
+        avg_conceded = goals_conceded / mp
+        
+        star_power = min(10.0, max(1.0, avg_scored * 4.0))
+        def_wall = min(15.0, max(1.0, 15.0 - (avg_conceded * 5.0)))
+        
+        return star_power, def_wall
+    except Exception as e:
+        print(f"Error calculating local team stats for {team_name}: {e}")
+        return 5.0, 5.0
+    finally:
+        db.close()
+
 def get_match_prediction(fixture, api_key, model=None):
     """
-    Calculates a prediction based on form, H2H, venue, Market Sentiment, and ML Model.
+    Calculates a prediction based on form, H2H, venue, and ML Model using local DB data.
     """
     fixture_id = fixture['fixture']['id']
-    home_id = fixture['teams']['home']['id']
-    away_id = fixture['teams']['away']['id']
+    home_name = fixture['teams']['home']['name']
+    away_name = fixture['teams']['away']['name']
     league_id = fixture['league']['id']
+    season = fixture['league'].get('season', 2025)
     
-    # Venue / Home Advantage
-    is_home = True # Current fixture home data
+    # 1. Match/Standardize team names against local DB
+    home_db_name = find_db_team_name(home_name, league_id)
+    away_db_name = find_db_team_name(away_name, league_id)
     
     # Weather Severity Analysis
     weather = fixture.get('fixture', {}).get('weather', {}).get('description', 'clear sky')
     temp = fixture.get('fixture', {}).get('weather', {}).get('temp') 
     weather_impact = 0
     if "rain" in weather.lower() or "snow" in weather.lower():
-        weather_impact = -8 # Stronger penalty for bad weather
-    if temp and (temp < 0 or temp > 35): # Extreme temps
+        weather_impact = -8 
+    if temp and (temp < 0 or temp > 35): 
         weather_impact -= 5
         
-    quota_conservation = os.getenv("QUOTA_CONSERVATION", "True").lower() in ("true", "1")
+    quota_conservation = True
 
-    # Core parameters always fetched
-    home_form = calculate_team_form(home_id, league_id, api_key)
-    away_form = calculate_team_form(away_id, league_id, api_key)
-    season = fixture['league'].get('season', 2025)
-    h2h_dominance = calculate_deep_h2h_dominance(home_id, away_id, api_key)
-    boogeyman_effect = calculate_boogeyman_score(home_id, away_id, h2h_dominance)
-    sentiment = get_market_sentiment(fixture_id, api_key)
+    # Core parameters fetched from local database
+    home_form = get_local_form(home_db_name, league_id)
+    away_form = get_local_form(away_db_name, league_id)
+    h2h_dominance = get_local_h2h(home_db_name, away_db_name, league_id)
+    boogeyman_effect = calculate_boogeyman_score(None, None, h2h_dominance)
+    sentiment = 0
     derby_active = calculate_derby_coefficient(fixture)
 
     # Surface & Travel
@@ -951,98 +1256,53 @@ def get_match_prediction(fixture, api_key, model=None):
     home_travel = 0
     away_travel = calculate_travel_stress(league_id, True)
 
-    if quota_conservation:
-        # Bypassed heavy API calls to keep requests under limit (saves 10+ calls per match)
-        home_injuries = 0
-        away_injuries = 0
-        home_fatigue = 0
-        away_fatigue = 0
-        home_bounce = 0
-        away_bounce = 0
-        poisson_boost = 0.0
-        home_stability = 0
-        away_stability = 0
-    else:
-        # Full high-quota mode
-        home_injuries = calculate_injury_impact(home_id, league_id, season, api_key)
-        away_injuries = calculate_injury_impact(away_id, league_id, season, api_key)
-        home_fatigue = calculate_fatigue_index(home_id, api_key)
-        away_fatigue = calculate_fatigue_index(away_id, api_key)
-        home_bounce = calculate_manager_bounce(home_id, api_key)
-        away_bounce = calculate_manager_bounce(away_id, api_key)
-        poisson_boost = calculate_poisson_score(fixture_id, api_key)
-        home_stability = calculate_lineup_stability(home_id, api_key)
-        away_stability = calculate_lineup_stability(away_id, api_key)
+    home_injuries = 0
+    away_injuries = 0
+    home_fatigue = 0
+    away_fatigue = 0
+    home_bounce = 0
+    away_bounce = 0
+    poisson_boost = 0.0
+    home_stability = 0
+    away_stability = 0
     
     # Derby Neutralizer: Boost the underdog form if it's a derby
     derby_home_boost = 10 if (derby_active and home_form < away_form) else 0
     derby_away_boost = 10 if (derby_active and away_form < home_form) else 0
     
     # Rule-Engine Score (Baseline V2)
-    home_score = home_form + 10 + (sentiment if sentiment > 0 else 0) + weather_impact
-    away_score = away_form + (abs(sentiment) if sentiment < 0 else 0)
+    home_score = home_form + 10 + weather_impact
+    away_score = away_form
     
-    # Integration of V4 Factors into Final Scores
-    home_score += (poisson_boost if poisson_boost > 0 else 0) + home_stability + derby_home_boost
-    away_score += (abs(poisson_boost) if poisson_boost < 0 else 0) + away_stability + derby_away_boost
+    home_score += derby_home_boost
+    away_score += derby_away_boost
     
     ml_outcome = "Beacon ML Analyzed"
-    home_motivation, away_motivation = 0, 0
-    home_star_power, away_star_power = 0, 0
-    home_def_wall, away_def_wall = 10, 10
     
-    if model or True: # Always fetch standings and stars for motivation logic now
-        # ... (standings logic remains same, just ensuring variables exist) ...
-        # [Standings code skipped for brevity in replace, keeping existing]
-        pass
-
-    # Integration of V3 Factors into Final Scores
-    home_score += (home_fatigue + home_bounce + home_travel)
-    away_score += (away_fatigue + away_bounce + away_travel + away_turf_impact)
-
-    # ... (rest of existing scoring logic for motivation, stars, def_wall) ...
-    # Refetching missing pieces from existing code to ensure continuity
-    try:
-        # [STANDINGS LOGIC]
-        s_key = (league_id, season)
-        if s_key in ANALYTICAL_CACHE["standings"]:
-            standings_raw = ANALYTICAL_CACHE["standings"][s_key]
-        else:
-            from football_api import get_team_standings
-            standings_raw = get_team_standings(league_id, season, api_key)
-            ANALYTICAL_CACHE["standings"][s_key] = standings_raw
-
-        home_rank, away_rank = 10, 10
-        total_teams = 20
-        if standings_raw and isinstance(standings_raw, dict) and standings_raw.get('response'):
-            league_data = standings_raw.get('response', [])[0].get('league', {})
-            league_standings = league_data.get('standings', [])[0]
-            total_teams = len(league_standings)
-            for entry in league_standings:
-                tid = entry['team']['id']
-                if tid == home_id: home_rank = entry['rank']
-                if tid == away_rank: away_rank = entry['rank']
-            
-        home_motivation = calculate_league_motivation(home_rank, total_teams)
-        away_motivation = calculate_league_motivation(away_rank, total_teams)
-        home_star_power = calculate_player_star_power(home_id, league_id, season, api_key)
-        away_star_power = calculate_player_star_power(away_id, league_id, season, api_key)
-        home_def_wall = calculate_defensive_wall(home_id, league_id, season, api_key)
-        away_def_wall = calculate_defensive_wall(away_id, league_id, season, api_key)
-    except:
-        pass
+    # Load rankings & motivation locally
+    standings = get_local_standings(league_id, season)
+    home_rank = standings.get(home_db_name, 10)
+    away_rank = standings.get(away_db_name, 10)
+    total_teams = len(standings) or 20
+    
+    home_motivation = calculate_league_motivation(home_rank, total_teams)
+    away_motivation = calculate_league_motivation(away_rank, total_teams)
+    
+    # Fetch team stats (star power and defensive wall) locally
+    home_star_power, home_def_wall = get_local_team_stats(home_db_name, league_id, season)
+    away_star_power, away_def_wall = get_local_team_stats(away_db_name, league_id, season)
 
     # final Omni Calibration
-    home_score += (home_motivation + home_star_power + (h2h_dominance if h2h_dominance > 0 else 0) + home_injuries + (boogeyman_effect if boogeyman_effect > 0 else 0))
-    away_score += (away_motivation + away_star_power + (abs(h2h_dominance) if h2h_dominance < 0 else 0) + away_injuries + (abs(boogeyman_effect) if boogeyman_effect < 0 else 0))
+    home_score += (home_motivation + home_star_power + (h2h_dominance if h2h_dominance > 0 else 0) + (boogeyman_effect if boogeyman_effect > 0 else 0))
+    away_score += (away_motivation + away_star_power + (abs(h2h_dominance) if h2h_dominance < 0 else 0) + (abs(boogeyman_effect) if boogeyman_effect < 0 else 0))
     
     # Multi-Variable Outcome Calibration
-    win_threshold = 20 # Omniscience requires higher conviction
-    if home_score > away_score + win_threshold: outcome = f"{fixture['teams']['home']['name']} Win"
-    elif away_score > home_score + win_threshold: outcome = f"{fixture['teams']['away']['name']} Win"
+    win_threshold = 20 
+    if home_score > away_score + win_threshold: outcome = f"{home_name} Win"
+    elif away_score > home_score + win_threshold: outcome = f"{away_name} Win"
     else: outcome = "Draw / Very Close"
 
-    ht_result = get_halftime_prediction(home_form + home_bounce + (home_stability/2), away_form + away_bounce + (away_stability/2))
+    ht_result = get_halftime_prediction(home_form, away_form)
     
     ref_name = fixture.get('fixture', {}).get('referee')
     card_risk = calculate_referee_impact(ref_name)
@@ -1083,8 +1343,6 @@ def get_match_prediction(fixture, api_key, model=None):
             prob_ou35 = model["ou35"].predict_proba(X_input)[0][1]
             
             # 1. Main Outcome
-            home_name = fixture['teams']['home']['name']
-            away_name = fixture['teams']['away']['name']
             if prob_outcome[1] > 0.45 and prob_outcome[1] > prob_outcome[2] + 0.10:
                 outcome = f"{home_name} Win"
                 ml_confidence = prob_outcome[1] * 100

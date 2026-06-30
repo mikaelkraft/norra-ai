@@ -4,7 +4,9 @@
     "weekly_wins": 5,
     "last_shoutout_date": "2026-01-08",
     "predictions_to_verify": {
-        "1033376": "Home"
+        "999999": "Home"
     },
-    "verified_ids": []
+    "verified_ids": [
+        "1033376"
+    ]
 }

@@ -68,41 +68,115 @@ def run_historical_fetch():
             print(f"Failed to fetch historical data for League ID {league_id}.")
 
 def fetch_predictions(api_key=None, dry_run=False):
-    # Authenticate with direct Football API (API-Sports)
-    api_key = os.getenv("FOOTBALL_API_KEY") 
-    print(f"Connecting to API-Sports...")
-    current_date = datetime.datetime.now().date()
+    print("Running predictions engine (Local DB + ESPN mode)...")
+    
+    # 1. Update current season match played database (fetch latest played results)
+    try:
+        from prediction_model import update_current_season_matches
+        update_current_season_matches()
+    except Exception as e:
+        print(f"Failed to update current season matches: {e}")
 
-    # Wholesome ML Training (Persistent & Incremental)
+    # 2. Train the ML model on local DB data
     try:
         from prediction_model import fetch_training_data, train_model
-        # Use all global leagues for training context (saved locally in training_data.csv)
         training_leagues = [l["league_id"] for l in leagues]
-        train_df = fetch_training_data(api_key, training_leagues)
+        train_df = fetch_training_data(None, training_leagues)
         model = train_model(train_df)
     except Exception as e:
         print(f"ML Training failed, falling back to rule-engine: {e}")
         model = None
 
-    # Fetch prioritized fixtures for today
-    from football_api import get_prioritized_fixtures
-    fixtures = get_prioritized_fixtures(current_date, api_key)
-
-    if not fixtures:
-        print(f"No matches found for Tier 1 or Tier 2 leagues on {current_date}.")
+    # 3. Fetch today's fixtures using free ESPN scoreboard API
+    from espn_api import fetch_combined_today_fixtures
+    try:
+        raw_fixtures = fetch_combined_today_fixtures()
+    except Exception as e:
+        print(f"Failed to fetch fixtures from ESPN Scoreboard: {e}")
         return
 
-    # Process fetched fixtures and generate predictions
-    predictions = generate_predictions(fixtures, api_key, model=model)
+    if not raw_fixtures:
+        print("No matches found on ESPN Scoreboard today.")
+        return
+
+    # 4. Convert ESPN fixtures to mock API-Football dictionary format
+    fixtures = []
+    for f in raw_fixtures:
+        season_val = 2025
+        for l in leagues:
+            if l["league_id"] == f["league_id"]:
+                season_val = l["season"]
+                break
+        
+        mocked_fixture = {
+            "fixture": {
+                "id": hash(f"{f['home']}_{f['away']}_{f['league_id']}") % 10000000,
+                "venue": {
+                    "name": "Main Stadium",
+                    "city": "Unknown"
+                },
+                "weather": {
+                    "description": "clear sky",
+                    "temp": 20
+                },
+                "referee": "Standard Referee"
+            },
+            "teams": {
+                "home": {
+                    "id": hash(f['home']) % 10000,
+                    "name": f['home']
+                },
+                "away": {
+                    "id": hash(f['away']) % 10000,
+                    "name": f['away']
+                }
+            },
+            "league": {
+                "id": f['league_id'],
+                "name": f['espn_league'],
+                "season": season_val
+            }
+        }
+        fixtures.append(mocked_fixture)
+
+    # 5. Process fetched fixtures and generate predictions
+    predictions = generate_predictions(fixtures, None, model=model)
     
-    # Post predictions to X
+    # 6. Post predictions to X
     post_predictions(predictions, dry_run=dry_run)
+
+def generate_dynamic_advice(home, away, detailed_data):
+    outcome = detailed_data.get("main", "Draw / Very Close")
+    confidence_str = detailed_data.get("confidence", "50%")
+    try:
+        confidence = float(confidence_str.replace("%", "").strip())
+    except ValueError:
+        confidence = 50.0
+        
+    btts = detailed_data.get("btts", "NG / No")
+    ou = detailed_data.get("ou_refined", "Under 2.5")
+    dnb = detailed_data.get("dnb", "1 DNB")
+    dc = detailed_data.get("dc", "1X / 2X")
+    combos = detailed_data.get("combos", "")
+    
+    if "win" in outcome.lower():
+        winner_team = home if ("home" in outcome.lower() or home.lower() in outcome.lower()) else away
+        if confidence >= 80.0:
+            return f"Ultra High Conviction: Straight win for {winner_team} is highly recommended. For safer play, select {winner_team} Draw No Bet ({dnb})."
+        elif confidence >= 70.0:
+            return f"High Conviction: Strong stats favoring {winner_team}. Recommended selection: {winner_team} Win or {winner_team} Draw No Bet ({dnb})."
+        else:
+            return f"Moderate Conviction: Favors {winner_team} but stats show close margins. Safe selection: Double Chance {dc} or combo bet: {combos}."
+    else:
+        if "over 2.5" in ou.lower() or "gg" in btts.lower():
+            return f"Close Match: Competitive draw risk. Best selections are in goals/GG markets: Over 1.5/2.5 goals ({ou}) or Both Teams to Score ({btts})."
+        else:
+            return f"Defensive Close Match: Low-scoring draw risk. Best selections: Under 2.5 goals ({ou}) or Double Chance {dc}."
 
 def generate_predictions(fixtures, api_key, model=None):
     """
-    Richer prediction generation using lineups, injuries, form, and ML.
+    Richer prediction generation using local DB stats and ML.
     """
-    from football_api import get_predictions, get_lineups
     from prediction_model import get_match_prediction
     predictions = {}
 
@@ -111,57 +185,27 @@ def generate_predictions(fixtures, api_key, model=None):
         home_team = fixture['teams']['home']['name']
         away_team = fixture['teams']['away']['name']
         
-        # Get native API predictions/advice
-        api_preds = get_predictions(fixture_id, api_key)
+        # Native API predictions are not used (API-Football is bypassed)
         advice = "No specific advice"
         winner = "Unknown"
         conf = "50%"
-        
-        if api_preds:
-            p = api_preds[0]
-            preds_dict = p.get('predictions') or {}
-            advice = preds_dict.get('advice') or advice
-            
-            winner_dict = preds_dict.get('winner') or {}
-            winner = winner_dict.get('name') or winner
-            
-            win_odds = preds_dict.get('percent') or {}
-            
-            # Pick the highest % for confidence
-            winner_comment = winner_dict.get('comment') or 'home'
-            winner_key = str(winner_comment).lower()
-            if 'home' in winner_key: winner = home_team
-            elif 'away' in winner_key: winner = away_team
-            
-            conf = win_odds.get(winner_key if winner_key in win_odds else 'home') or '50%'
+        gg_outcome = "N/A"
+        ou_outcome = "N/A"
 
-            # Extract BTTS (GG) and Over/Under
-            btts = preds_dict.get('btts', None)
-            goals_dict = preds_dict.get('goals') or {}
-            over_under = goals_dict.get('over', None)
-            
-            gg_outcome = "GG" if btts is True else ("NG" if btts is False else "N/A")
-            ou_outcome = "Over 2.5" if over_under else "Under 2.5"
-        else:
-            gg_outcome = "N/A"
-            ou_outcome = "N/A"
-
-        # NEW: Get Hybrid ML + Rule-Engine Prediction
-        detailed_data = get_match_prediction(fixture, api_key, model=model)
+        # Get Hybrid ML + Rule-Engine Prediction locally
+        detailed_data = get_match_prediction(fixture, None, model=model)
         
-        # Extract Rich Heading Context
         league_name = fixture['league']['name']
         venue = fixture['fixture'].get('venue', {}).get('name', 'Main Stadium')
         location = fixture['fixture'].get('venue', {}).get('city', 'Unknown')
 
         result_key = f"{home_team} vs {away_team}"
         
-        # Override the external API advice with our own RandomForestClassifier predictions
         rf_winner = detailed_data.get("main", winner)
         rf_confidence = detailed_data.get("confidence", conf)
         rf_gg = detailed_data.get("btts", gg_outcome)
         rf_ou = detailed_data.get("ou_refined", ou_outcome)
-        rf_advice = f"Based on ranks, motivation, and historical team stats, {rf_winner} is the high conviction outcome."
+        rf_advice = generate_dynamic_advice(home_team, away_team, detailed_data)
 
         predictions[result_key] = {
             "fixture_id": fixture_id,
@@ -504,16 +548,15 @@ def save_predictions_to_json(predictions):
 def verify_previous_matches(api_key):
     """
     Verifies the outcomes of matches from yesterday that were predicted,
-    and updates bot statistics (wins/losses).
+    and updates bot statistics (wins/losses) using local played_matches.
     """
     import datetime
     import json
     import os
-    from football_api import get_fixture_by_id
+    from prediction_model import standardize_team_name
 
     stats = load_bot_stats()
 
-    # Initialize keys
     stats.setdefault('predictions_to_verify', {})
     stats.setdefault('weekly_wins', 0)
     stats.setdefault('verified_ids', [])
@@ -522,47 +565,78 @@ def verify_previous_matches(api_key):
         print("No pending predictions to verify.")
         return
 
-    print(f"\n--- Verifying {len(stats['predictions_to_verify'])} Pending Matches ---")
+    print(f"\n--- Verifying {len(stats['predictions_to_verify'])} Pending Matches locally ---")
     
     pending_ids = list(stats['predictions_to_verify'].keys())
     wins_added = 0
     total_checked = 0
-
-    for fid in pending_ids:
-        fixture = get_fixture_by_id(fid, api_key)
-        if not fixture: continue
-        
-        status = fixture['fixture']['status']['short']
-        if status == 'FT':
+    
+    db = SessionLocal()
+    try:
+        for fid in pending_ids:
+            pred_record = db.query(Prediction).filter(Prediction.fixture_id == int(fid)).first()
+            if not pred_record:
+                stats['verified_ids'].append(fid)
+                del stats['predictions_to_verify'][fid]
+                continue
+                
+            home_std = standardize_team_name(pred_record.home_team)
+            away_std = standardize_team_name(pred_record.away_team)
+            
+            recent_matches = db.query(database.PlayedMatch).filter(
+                database.PlayedMatch.match_date >= datetime.datetime.utcnow() - datetime.timedelta(days=4)
+            ).all()
+            
+            played_fixture = None
+            for rm in recent_matches:
+                rm_home_std = standardize_team_name(rm.home_team)
+                rm_away_std = standardize_team_name(rm.away_team)
+                if rm_home_std == home_std and rm_away_std == away_std:
+                    played_fixture = rm
+                    break
+                    
+            if not played_fixture:
+                print(f"[PENDING] Match {fid} ({pred_record.home_team} vs {pred_record.away_team}): Still pending / not found in played matches.")
+                continue
+                
             total_checked += 1
-            home_g = fixture['goals']['home']
-            away_g = fixture['goals']['away']
+            home_g = played_fixture.home_goals
+            away_g = played_fixture.away_goals
             actual_winner = "Home" if home_g > away_g else ("Away" if away_g > home_g else "Draw")
             
             predicted_winner = stats['predictions_to_verify'][fid]
             
-            if predicted_winner == actual_winner or (predicted_winner == "Draw" and home_g == away_g):
+            is_correct = False
+            if predicted_winner == "Draw" or "Draw" in predicted_winner:
+                if home_g == away_g:
+                    is_correct = True
+            elif "home" in predicted_winner.lower() or pred_record.home_team.lower() in predicted_winner.lower():
+                if home_g > away_g:
+                    is_correct = True
+            elif "away" in predicted_winner.lower() or pred_record.away_team.lower() in predicted_winner.lower():
+                if away_g > home_g:
+                    is_correct = True
+                    
+            if is_correct:
                 wins_added += 1
-                print(f"✅ Match {fid}: Correct! ({predicted_winner})")
+                print(f"[SUCCESS] Match {fid} ({pred_record.home_team} vs {pred_record.away_team}): Correct! ({predicted_winner})")
             else:
-                print(f"❌ Match {fid}: Incorrect. Predicted {predicted_winner}, Result {actual_winner}")
+                print(f"[FAIL] Match {fid} ({pred_record.home_team} vs {pred_record.away_team}): Incorrect. Predicted {predicted_winner}, Result {actual_winner} ({home_g}-{away_g})")
             
-            # Move to historical verification log and remove from pending
             stats['verified_ids'].append(fid)
             del stats['predictions_to_verify'][fid]
-        else:
-            print(f"⏳ Match {fid}: Still pending ({status}).")
+    except Exception as e:
+        print(f"Failed to verify previous matches: {e}")
+    finally:
+        db.close()
 
     if total_checked > 0:
-        # Update weekly win streak (sliding window of 7 days would be complex, 
-        # using a simple increment for now)
         stats['weekly_wins'] = stats.get('weekly_wins', 0) + wins_added
         
-        # Reset weekly wins if more than a week passed (simplified)
         last_reset = stats.get("last_weekly_reset", "")
         today_str = datetime.datetime.now().strftime("%Y-%m-%d")
-        if last_reset != today_str and datetime.datetime.now().weekday() == 0: # Monday reset
-            stats["weekly_wins"] = wins_added # Reset to current week's wins
+        if last_reset != today_str and datetime.datetime.now().weekday() == 0:
+            stats["weekly_wins"] = wins_added
             stats["last_weekly_reset"] = today_str
 
     update_bot_stats(stats)
@@ -575,22 +649,16 @@ if __name__ == "__main__":
     import json
     import tweepy
     import datetime
-    from football_api import get_fixtures, get_prioritized_fixtures, get_predictions, get_lineups
     
     dry_run = "--dry-run" in sys.argv
     
     print(f"--- Norra AI Start Sequence (Dry Run: {dry_run}) ---")
     
-    api_key = os.getenv("FOOTBALL_API_KEY")
-
-    if api_key:
-        # Step 0: Initialize Database
-        database.init_db()
-        
-        # Step 1: Verify Performance
-        verify_previous_matches(api_key)
-        
-        # Step 1: Run Predictions
-        fetch_predictions(api_key=api_key, dry_run=dry_run)
-    else:
-        print("CRITICAL: FOOTBALL_API_KEY not found in .env")
+    # Step 0: Initialize Database
+    database.init_db()
+    
+    # Step 1: Verify Performance
+    verify_previous_matches(None)
+    
+    # Step 2: Run Predictions
+    fetch_predictions(api_key=None, dry_run=dry_run)

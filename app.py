@@ -384,20 +384,16 @@ def run_predictions_endpoint(token: str, background_tasks: BackgroundTasks):
         
         def run_prediction_job():
             print("Starting background prediction sequence...")
-            api_key = os.getenv("FOOTBALL_API_KEY")
-            if api_key:
-                try:
-                    verify_previous_matches(api_key)
-                except Exception as e:
-                    print(f"Error in background match verification: {e}")
-                    
-                try:
-                    # Runs twice daily predictions, filtering and auto-posting only those with confidence > 90%
-                    fetch_predictions(api_key=api_key, dry_run=False)
-                except Exception as e:
-                    print(f"Error in background prediction run: {e}")
-            else:
-                print("FOOTBALL_API_KEY missing in background task context.")
+            try:
+                verify_previous_matches(None)
+            except Exception as e:
+                print(f"Error in background match verification: {e}")
+                
+            try:
+                # Runs twice daily predictions, filtering and auto-posting only those with confidence > 90%
+                fetch_predictions(api_key=None, dry_run=False)
+            except Exception as e:
+                print(f"Error in background prediction run: {e}")
 
         background_tasks.add_task(run_prediction_job)
         return {"status": "started", "message": "Prediction sequence launched in background."}
