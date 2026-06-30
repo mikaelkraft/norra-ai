@@ -69,10 +69,10 @@ if bot:
                     (database.Prediction.away_team.ilike(f"%{query}%"))
                 ).order_by(database.Prediction.created_at.desc()).limit(1).all()
                 
-                # 2. If not found, trigger on-demand generation using free ESPN Scoreboard & API-Football
-                    if not predictions:
-                        bot.reply_to(message, f"❌ I couldn't find any active predictions for '{query.capitalize()}' in my database right now. Predictions are generated daily by our automated system. Please check the website timeline, or try again later when predictions are updated!")
-                        return
+                # 2. If not found, return fallback message (live API fetching disabled to protect quota)
+                if not predictions:
+                    bot.reply_to(message, f"❌ I couldn't find any active predictions for '{query.capitalize()}' in my database right now. Predictions are generated daily by our automated system. Please check the website timeline, or try again later when predictions are updated!")
+                    return
             else:
                 # Default to top 5 recent predictions
                 predictions = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(5).all()
