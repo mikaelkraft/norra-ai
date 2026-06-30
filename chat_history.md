@@ -66,3 +66,10 @@
 * **Our Response & Implementation**:
   * Summarized the complete progress of historical data imports, Telegram webhook secret token validation fixes, exception handling on predictions endpoint, Free plan API safety logic, mobile UI fixes, chatbot & Telegram command local-only database fetches, and the admin panel portal password prompt and cron trigger buttons.
   * Resolved the inline CSS linter warning in [index.html](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/index.html) by moving inline styles on the navigation bar action container to a clean `.nav-actions` class in [style.css](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/style.css).
+  * Fixed an `IndentationError` in [telegram_bot.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/telegram_bot.py) line 73 by correcting the indentation of the `if not predictions:` block under the `/today` command.
+
+### Session Continuation (June 30, 2026 - 1:49 AM)
+* **User Request**: Check if the Telegram bot is making live API requests on `/today` and stop it.
+* **Our Response & Implementation**:
+  * Inspected [telegram_bot.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/telegram_bot.py) and verified that the `/today` command already queries the local database exclusively. There are no active API requests or scoreboard searches defined in the command handler.
+  * Updated a leftover comment in [telegram_bot.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/telegram_bot.py) to clarify that live API fetching is disabled to protect quota limits.
