@@ -70,24 +70,7 @@ def run_historical_fetch():
 def fetch_predictions(api_key=None, dry_run=False):
     print("Running predictions engine (Local DB + ESPN mode)...")
     
-    # 1. Update current season match played database (fetch latest played results)
-    try:
-        from prediction_model import update_current_season_matches
-        update_current_season_matches()
-    except Exception as e:
-        print(f"Failed to update current season matches: {e}")
-
-    # 2. Train the ML model on local DB data
-    try:
-        from prediction_model import fetch_training_data, train_model
-        training_leagues = [l["league_id"] for l in leagues]
-        train_df = fetch_training_data(None, training_leagues)
-        model = train_model(train_df)
-    except Exception as e:
-        print(f"ML Training failed, falling back to rule-engine: {e}")
-        model = None
-
-    # 3. Fetch today's fixtures using free ESPN scoreboard API
+    # 1. Fetch today's fixtures using free ESPN scoreboard API first
     from espn_api import fetch_combined_today_fixtures
     try:
         raw_fixtures = fetch_combined_today_fixtures()
@@ -98,6 +81,27 @@ def fetch_predictions(api_key=None, dry_run=False):
     if not raw_fixtures:
         print("No matches found on ESPN Scoreboard today.")
         return
+
+    # Extract active league IDs from today's fixtures
+    active_leagues = list(set([f["league_id"] for f in raw_fixtures if f.get("league_id")]))
+    print(f"Active leagues with matches today: {active_leagues}")
+
+    # 2. Update current season match played database ONLY for active leagues with games today
+    try:
+        from prediction_model import update_current_season_matches
+        update_current_season_matches(active_leagues)
+    except Exception as e:
+        print(f"Failed to update active season matches: {e}")
+
+    # 3. Train the ML model on local DB data
+    try:
+        from prediction_model import fetch_training_data, train_model
+        training_leagues = [l["league_id"] for l in leagues]
+        train_df = fetch_training_data(None, training_leagues)
+        model = train_model(train_df)
+    except Exception as e:
+        print(f"ML Training failed, falling back to rule-engine: {e}")
+        model = None
 
     # 4. Convert ESPN fixtures to mock API-Football dictionary format
     fixtures = []

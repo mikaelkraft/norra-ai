@@ -350,13 +350,21 @@ def fetch_football_data_co_uk_historical(league_id):
         return True
     return False
 
-def update_current_season_matches():
-    """Loops over all mapped leagues and pulls down current match results from football-data.co.uk."""
+def update_current_season_matches(active_leagues=None):
+    """Loops over active leagues and pulls down current match results from football-data.co.uk."""
     print("Running daily check for current season match updates...")
     target_leagues = [
         113, 103, 253, 71, 128, # Sweden, Norway, MLS, Brazil, Argentina
         39, 140, 135, 78, 61, 88 # EPL, La Liga, Serie A, Bundesliga, Ligue 1, Eredivisie
     ]
+    if active_leagues is not None:
+        filtered_leagues = [lid for lid in target_leagues if lid in active_leagues]
+        if not filtered_leagues:
+            print("No active mapped leagues have matches today. Skipping historical CSV updates to conserve memory.")
+            return
+        target_leagues = filtered_leagues
+        
+    print(f"Updating matches for leagues: {target_leagues}")
     updated_count = 0
     for lid in target_leagues:
         try:
@@ -364,7 +372,7 @@ def update_current_season_matches():
                 updated_count += 1
         except Exception as e:
             print(f"Failed to update matches for league {lid}: {e}")
-    print(f"Update sequence complete. Updated {updated_count}/{len(target_leagues)} leagues.")
+    print(f"Update sequence complete. Updated {updated_count} leagues.")
 
 def import_footystats_csv(csv_filepath_or_url):
     """
