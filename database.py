@@ -40,6 +40,10 @@ class Prediction(Base):
     ht_ft = Column(String)
     combos = Column(String)
     league_avg_goals = Column(Float)
+    match_date = Column(DateTime, nullable=True)
+    actual_home_goals = Column(Integer, nullable=True)
+    actual_away_goals = Column(Integer, nullable=True)
+    status = Column(String, default="pending")
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
 
 class MatchTrainingData(Base):
@@ -104,6 +108,22 @@ def init_db():
         if "league_avg_goals" not in columns:
             print("Migration: Adding 'league_avg_goals' column to 'predictions' table...")
             db.execute(text("ALTER TABLE predictions ADD COLUMN league_avg_goals FLOAT;"))
+            db.commit()
+        if "match_date" not in columns:
+            print("Migration: Adding 'match_date' column to 'predictions' table...")
+            db.execute(text("ALTER TABLE predictions ADD COLUMN match_date TIMESTAMP;"))
+            db.commit()
+        if "actual_home_goals" not in columns:
+            print("Migration: Adding 'actual_home_goals' column to 'predictions' table...")
+            db.execute(text("ALTER TABLE predictions ADD COLUMN actual_home_goals INTEGER;"))
+            db.commit()
+        if "actual_away_goals" not in columns:
+            print("Migration: Adding 'actual_away_goals' column to 'predictions' table...")
+            db.execute(text("ALTER TABLE predictions ADD COLUMN actual_away_goals INTEGER;"))
+            db.commit()
+        if "status" not in columns:
+            print("Migration: Adding 'status' column to 'predictions' table...")
+            db.execute(text("ALTER TABLE predictions ADD COLUMN status VARCHAR(20) DEFAULT 'pending';"))
             db.commit()
     except Exception as e:
         print(f"Migration error: {e}")

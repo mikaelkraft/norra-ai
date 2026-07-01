@@ -92,35 +92,64 @@ def read_root():
 
 @app.get("/predictions")
 def read_predictions(db: Session = Depends(database.get_db)):
-    predictions = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(20).all()
-    formatted_preds = [{
-        "fixture_id": p.fixture_id,
-        "home": p.home_team,
-        "away": p.away_team,
-        "league": p.league_name,
-        "main": p.prediction_main,
-        "conf": p.confidence,
-        "dc": p.dc,
-        "ht": p.ht,
-        "ou_refined": p.ou_refined,
-        "btts": p.btts,
-        "dnb": p.dnb,
-        "multi_goals": p.multi_goals,
-        "ht_ft": p.ht_ft,
-        "combos": p.combos,
-        "stars": p.star_power,
-        "h2h": p.h2h_dom,
-        "league_avg_goals": p.league_avg_goals,
-        "date": p.created_at.strftime("%Y-%m-%d %H:%M")
-    } for p in predictions]
+    import datetime
+    # Fetch 100 recent predictions to categorize
+    all_preds = db.query(database.Prediction).order_by(database.Prediction.created_at.desc()).limit(100).all()
+    
+    now = datetime.datetime.utcnow()
+    # 3 hours kickoff grace period. After 3 hours from kickoff, it's considered concluded
+    grace_cutoff = now - datetime.timedelta(hours=3)
+    
+    active_preds = []
+    past_preds = []
+    
+    for p in all_preds:
+        # Determine date to check kickoff
+        m_date = p.match_date or p.created_at
+        
+        # If status is pending and match date is either future or within 3h of kickoff, it's active
+        if p.status == "pending" and m_date >= grace_cutoff:
+            active_preds.append(p)
+        else:
+            past_preds.append(p)
+            
+    def format_prediction(p):
+        return {
+            "fixture_id": p.fixture_id,
+            "home": p.home_team,
+            "away": p.away_team,
+            "league": p.league_name,
+            "main": p.prediction_main,
+            "conf": p.confidence,
+            "dc": p.dc,
+            "ht": p.ht,
+            "ou_refined": p.ou_refined,
+            "btts": p.btts,
+            "dnb": p.dnb,
+            "multi_goals": p.multi_goals,
+            "ht_ft": p.ht_ft,
+            "combos": p.combos,
+            "stars": p.star_power,
+            "h2h": p.h2h_dom,
+            "league_avg_goals": p.league_avg_goals,
+            "date": (p.match_date or p.created_at).strftime("%Y-%m-%d %H:%M"),
+            "status": p.status,
+            "actual_home_goals": p.actual_home_goals,
+            "actual_away_goals": p.actual_away_goals
+        }
+        
+    formatted_active = [format_prediction(p) for p in active_preds]
+    formatted_past = [format_prediction(p) for p in past_preds]
     
     last_updated = "Unknown"
-    if predictions:
-        last_updated = predictions[0].created_at.strftime("%Y-%m-%d %H:%M UTC")
+    if all_preds:
+        last_updated = all_preds[0].created_at.strftime("%Y-%m-%d %H:%M UTC")
         
     return {
         "last_updated": last_updated,
-        "predictions": formatted_preds
+        "predictions": formatted_active, # Backward compatibility
+        "active_predictions": formatted_active,
+        "past_predictions": formatted_past
     }
 
 @app.get("/stats")
@@ -216,6 +245,91 @@ def post_manual(fixture_id: int, platform: str, token: str, db: Session = Depend
             return {"status": "success", "message": f"Posted to Web App timeline, but social broadcast failed: {api_error}"}
         return {"status": "success", "message": "Posted to X and Web App successfully!", "link": tweet_link}
 
+def recalculate_stats(db: Session):
+    from Norra import load_bot_stats, update_bot_stats
+    import datetime
+    try:
+        stats = load_bot_stats()
+        
+        today = datetime.datetime.utcnow()
+        # Monday of current week
+        start_of_week = today - datetime.timedelta(days=today.weekday())
+        start_of_week = start_of_week.replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        weekly_wins_count = db.query(database.Prediction).filter(
+            database.Prediction.status == "won",
+            database.Prediction.created_at >= start_of_week
+        ).count()
+        
+        stats["weekly_wins"] = weekly_wins_count
+        update_bot_stats(stats)
+        print(f"Stats Recalculated: weekly_wins={weekly_wins_count}")
+    except Exception as e:
+        print(f"Failed to recalculate weekly wins stats: {e}")
+
+@app.post("/api/admin/decide-outcome")
+def decide_outcome(
+    fixture_id: int, 
+    home_goals: int, 
+    away_goals: int, 
+    status_override: str, 
+    token: str, 
+    db: Session = Depends(database.get_db)
+):
+    secure_token = os.getenv("CRON_TOKEN")
+    if not secure_token or token != secure_token:
+        raise HTTPException(status_code=401, detail="Unauthorized token.")
+        
+    pred = db.query(database.Prediction).filter(database.Prediction.fixture_id == fixture_id).first()
+    if not pred:
+        raise HTTPException(status_code=404, detail="Prediction not found.")
+        
+    pred.actual_home_goals = home_goals
+    pred.actual_away_goals = away_goals
+    
+    if status_override in ["won", "lost", "void"]:
+        pred.status = status_override
+    else:
+        is_correct = False
+        p_main = pred.prediction_main.lower()
+        h_name = pred.home_team.lower()
+        a_name = pred.away_team.lower()
+        
+        if "draw" in p_main:
+            if home_goals == away_goals:
+                is_correct = True
+        elif h_name in p_main or "home" in p_main:
+            if home_goals > away_goals:
+                is_correct = True
+        elif a_name in p_main or "away" in p_main:
+            if away_goals > home_goals:
+                is_correct = True
+                
+        pred.status = "won" if is_correct else "lost"
+        
+    played = db.query(database.PlayedMatch).filter(database.PlayedMatch.fixture_id == fixture_id).first()
+    if not played:
+        match_dt = pred.match_date or pred.created_at
+        played = database.PlayedMatch(
+            fixture_id=fixture_id,
+            league_id=None,
+            season="2025",
+            match_date=match_dt,
+            home_team=pred.home_team,
+            away_team=pred.away_team,
+            home_goals=home_goals,
+            away_goals=away_goals
+        )
+        db.add(played)
+    else:
+        played.home_goals = home_goals
+        played.away_goals = away_goals
+        
+    db.commit()
+    recalculate_stats(db)
+    
+    return {"status": "success", "prediction_status": pred.status}
+
 @app.get("/api/verify-admin-code")
 def verify_admin_code(code: str):
     access_code = os.getenv("ADMIN_ACCESS_CODE")
@@ -275,19 +389,39 @@ def admin_dashboard(token: str = ""):
         <style>
             body {{ font-family: Arial, sans-serif; background: #0f172a; color: white; padding: 40px; margin: 0; }}
             h1 {{ color: #3b82f6; margin: 0; }}
-            .card {{ background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; }}
-            .btn {{ padding: 10px 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; margin-left: 10px; transition: opacity 0.2s; text-decoration: none; display: inline-block; }}
+            .card {{ background: #1e293b; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px; }}
+            .btn {{ padding: 10px 16px; border-radius: 6px; border: none; cursor: pointer; font-weight: bold; transition: opacity 0.2s; text-decoration: none; display: inline-block; }}
             .btn:hover {{ opacity: 0.9; }}
             .btn-x {{ background: #1da1f2; color: white; }}
             .btn-tg {{ background: #0088cc; color: white; }}
             .btn-cron {{ background: #eab308; color: black; }}
-            .info {{ display: flex; flex-direction: column; gap: 5px; }}
+            .btn-save {{ background: #10b981; color: white; }}
+            .info {{ display: flex; flex-direction: column; gap: 5px; min-width: 250px; }}
             .teams {{ font-size: 18px; font-weight: bold; }}
             .league {{ font-size: 14px; color: #94a3b8; }}
             .options {{ font-size: 14px; color: #e2e8f0; }}
             .admin-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 30px; border-bottom: 1px solid #334155; padding-bottom: 20px; }}
+            
+            /* Tabs styling */
+            .tabs {{ display: flex; gap: 10px; margin-bottom: 25px; border-bottom: 1px solid #334155; padding-bottom: 10px; }}
+            .tab-btn {{ background: transparent; border: 1px solid #475569; color: #94a3b8; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-weight: bold; font-size: 14px; transition: all 0.2s; }}
+            .tab-btn.active, .tab-btn:hover {{ background: #3b82f6; color: white; border-color: #3b82f6; }}
+            
+            .tab-content {{ display: none; }}
+            .tab-content.active {{ display: block; }}
+            
+            .decider-form {{ display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }}
+            .score-input {{ width: 65px; padding: 8px; border: 1px solid #475569; border-radius: 6px; background: #0f172a; color: white; text-align: center; font-size: 16px; font-weight: bold; }}
+            .status-select {{ padding: 8px; background: #0f172a; color: white; border: 1px solid #475569; border-radius: 6px; }}
+            .status-badge-inline {{ padding: 3px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; margin-left: 8px; display: inline-block; }}
+            .badge-won {{ background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }}
+            .badge-lost {{ background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }}
+            .badge-void {{ background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.3); }}
+            .badge-pending {{ background: rgba(234, 179, 8, 0.15); color: #eab308; border: 1px solid rgba(234, 179, 8, 0.3); }}
         </style>
         <script>
+            let predictionsData = {{}};
+            
             async function triggerPost(fixtureId, platform) {{
                 const token = "{secure_token}";
                 const res = await fetch(`/api/post-manual?fixture_id=${{fixtureId}}&platform=${{platform}}&token=${{token}}`, {{ method: "POST" }});
@@ -319,6 +453,114 @@ def admin_dashboard(token: str = ""):
                     btn.textContent = "⚡ Run Daily Predictions (Cron)";
                 }}
             }}
+            
+            async function saveOutcome(fixtureId) {{
+                const homeGoals = document.getElementById(`score-home-${{fixtureId}}`).value;
+                const awayGoals = document.getElementById(`score-away-${{fixtureId}}`).value;
+                const statusOverride = document.getElementById(`override-${{fixtureId}}`).value;
+                
+                if (homeGoals === "" || awayGoals === "") {{
+                    alert("Please input both Home and Away goals.");
+                    return;
+                }}
+                
+                const token = "{secure_token}";
+                const url = `/api/admin/decide-outcome?fixture_id=${{fixtureId}}&home_goals=${{homeGoals}}&away_goals=${{awayGoals}}&status_override=${{statusOverride}}&token=${{token}}`;
+                
+                try {{
+                    const res = await fetch(url, {{ method: "POST" }});
+                    const data = await res.json();
+                    if (data.status === "success") {{
+                        alert(`Outcome resolved! Status set to: ${{data.prediction_status.toUpperCase()}}`);
+                        loadPredictions();
+                    }} else {{
+                        alert(`Error: ${{data.detail || "Update failed."}}`);
+                    }}
+                }} catch (err) {{
+                    alert(`Network Error: ${{err.message}}`);
+                }}
+            }}
+            
+            function switchAdminTab(tabName) {{
+                document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+                document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+                
+                document.getElementById(`tab-${{tabName}}`).classList.add('active');
+                event.target.classList.add('active');
+            }}
+            
+            async function loadPredictions() {{
+                const res = await fetch('/predictions');
+                const data = await res.json();
+                predictionsData = data;
+                
+                renderActiveList(data.active_predictions || []);
+                renderConcludedList(data.past_predictions || []);
+            }}
+            
+            function renderActiveList(activeList) {{
+                const container = document.getElementById('active-list-container');
+                if (activeList.length === 0) {{
+                    container.innerHTML = "<p style='color: #94a3b8;'>No active/pending predictions found today.</p>";
+                    return;
+                }}
+                container.innerHTML = "";
+                activeList.forEach(p => {{
+                    const card = document.createElement('div');
+                    card.className = "card";
+                    card.innerHTML = `
+                        <div class="info">
+                            <div class="teams">${{p.home}} vs ${{p.away}}</div>
+                            <div class="league">${{p.league}} | FT: ${{p.main}} (${{p.conf}}) | Avg: ${{p.league_avg_goals || 'N/A'}}</div>
+                            <div class="options">Date: ${{p.date}} | DC: ${{p.dc}} | BTTS: ${{p.btts}} | Combo: ${{p.combos}}</div>
+                        </div>
+                        <div>
+                            <button class="btn btn-x" onclick="triggerPost(${{p.fixture_id}}, 'X')">Post to X</button>
+                            <button class="btn btn-tg" onclick="triggerPost(${{p.fixture_id}}, 'Telegram')">Post to Telegram</button>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                }});
+            }}
+            
+            function renderConcludedList(pastList) {{
+                const container = document.getElementById('concluded-list-container');
+                if (pastList.length === 0) {{
+                    container.innerHTML = "<p style='color: #94a3b8;'>No concluded/archive predictions found in database.</p>";
+                    return;
+                }}
+                container.innerHTML = "";
+                pastList.forEach(p => {{
+                    const card = document.createElement('div');
+                    card.className = "card";
+                    
+                    const badgeClass = p.status === 'won' ? 'badge-won' : (p.status === 'lost' ? 'badge-lost' : (p.status === 'void' ? 'badge-void' : 'badge-pending'));
+                    const statusText = p.status.toUpperCase();
+                    
+                    card.innerHTML = `
+                        <div class="info">
+                            <div class="teams">${{p.home}} vs ${{p.away}} <span class="status-badge-inline ${{badgeClass}}">${{statusText}}</span></div>
+                            <div class="league">${{p.league}} | Predicted: <strong>${{p.main}}</strong> (${{p.conf}})</div>
+                            <div class="options">Date: ${{p.date}} | Current Score: ${{p.actual_home_goals !== null ? `${{p.actual_home_goals}} - ${{p.actual_away_goals}}` : 'None'}}</div>
+                        </div>
+                        <div class="decider-form">
+                            <input type="number" id="score-home-${{p.fixture_id}}" class="score-input" placeholder="Home" value="${{p.actual_home_goals !== null ? p.actual_home_goals : ''}}" min="0" />
+                            <span>-</span>
+                            <input type="number" id="score-away-${{p.fixture_id}}" class="score-input" placeholder="Away" value="${{p.actual_away_goals !== null ? p.actual_away_goals : ''}}" min="0" />
+                            <select id="override-${{p.fixture_id}}" class="status-select">
+                                <option value="auto" ${{p.status === 'pending' ? 'selected' : ''}}>Auto Calculate</option>
+                                <option value="won" ${{p.status === 'won' ? 'selected' : ''}}>Force Won</option>
+                                <option value="lost" ${{p.status === 'lost' ? 'selected' : ''}}>Force Lost</option>
+                                <option value="void" ${{p.status === 'void' ? 'selected' : ''}}>Force Void</option>
+                            </select>
+                            <button class="btn btn-save" onclick="saveOutcome(${{p.fixture_id}})">Resolve</button>
+                        </div>
+                    `;
+                    container.appendChild(card);
+                }});
+            }}
+            
+            window.onload = loadPredictions;
         </script>
     </head>
     <body>
@@ -329,38 +571,23 @@ def admin_dashboard(token: str = ""):
             </div>
             <button id="trigger-cron-btn" class="btn btn-cron" onclick="triggerPredictionRun()">⚡ Run Daily Predictions (Cron)</button>
         </div>
-        <div id="predictions-list">
-            Loading predictions...
+        
+        <div class="tabs">
+            <button class="tab-btn active" onclick="switchAdminTab('active')">📡 Active VIP Picks</button>
+            <button class="tab-btn" onclick="switchAdminTab('concluded')">⚖️ Resolve Concluded Matches</button>
         </div>
-        <script>
-            async function loadPredictions() {{
-                const res = await fetch('/predictions');
-                const data = await res.json();
-                const list = document.getElementById('predictions-list');
-                if (!data.predictions || data.predictions.length === 0) {{
-                    list.innerHTML = "<p>No active predictions available to post today.</p>";
-                    return;
-                }}
-                list.innerHTML = "";
-                data.predictions.forEach(p => {{
-                    const card = document.createElement('div');
-                    card.className = "card";
-                    card.innerHTML = `
-                        <div class="info">
-                            <div class="teams">${{p.home}} vs ${{p.away}}</div>
-                            <div class="league">${{p.league}} | FT: ${{p.main}} (${{p.conf}}) | Avg Goals: ${{p.league_avg_goals || 'N/A'}}</div>
-                            <div class="options">DC: ${{p.dc}} | BTTS: ${{p.btts}} | DNB: ${{p.dnb}} | Combo: ${{p.combos}}</div>
-                        </div>
-                        <div>
-                            <button class="btn btn-x" onclick="triggerPost(${{p.fixture_id}}, 'X')">Post to X</button>
-                            <button class="btn btn-tg" onclick="triggerPost(${{p.fixture_id}}, 'Telegram')">Post to Telegram</button>
-                        </div>
-                    `;
-                    list.appendChild(card);
-                }});
-            }}
-            loadPredictions();
-        </script>
+        
+        <div id="tab-active" class="tab-content active">
+            <div id="active-list-container">
+                Loading active predictions...
+            </div>
+        </div>
+        
+        <div id="tab-concluded" class="tab-content">
+            <div id="concluded-list-container">
+                Loading concluded predictions...
+            </div>
+        </div>
     </body>
     </html>
     """

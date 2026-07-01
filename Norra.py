@@ -108,6 +108,7 @@ def fetch_predictions(api_key=None, dry_run=False):
         mocked_fixture = {
             "fixture": {
                 "id": hash(f"{f['home']}_{f['away']}_{f['league_id']}") % 10000000,
+                "date": f.get("date"),
                 "venue": {
                     "name": "Main Stadium",
                     "city": "Unknown"
@@ -229,7 +230,8 @@ def generate_predictions(fixtures, api_key, model=None):
             "gg": rf_gg,
             "ou": rf_ou,
             "heading": f"🏆 NorraAI MATCHDAY: {league_name} | {venue}",
-            "detailed": detailed_data
+            "detailed": detailed_data,
+            "match_date": fixture['fixture'].get('date')
         }
 
     return predictions
@@ -502,6 +504,16 @@ def post_predictions(predictions, dry_run=False):
         try:
             existing = db.query(Prediction).filter(Prediction.fixture_id == data['fixture_id']).first()
             if not existing:
+                match_dt = None
+                if data.get('match_date'):
+                    try:
+                        from prediction_model import parse_date
+                        match_dt = parse_date(data['match_date'])
+                    except Exception as date_err:
+                        print(f"Failed to parse match_date {data['match_date']}: {date_err}")
+                if not match_dt:
+                    match_dt = datetime.datetime.utcnow()
+                    
                 new_pred = Prediction(
                     fixture_id=data['fixture_id'],
                     home_team=home,
@@ -519,7 +531,9 @@ def post_predictions(predictions, dry_run=False):
                     combos=det['combos'],
                     star_power=det['star_power'],
                     h2h_dom=det['h2h_dom'],
-                    league_avg_goals=det['league_avg_goals']
+                    league_avg_goals=det['league_avg_goals'],
+                    match_date=match_dt,
+                    status="pending"
                 )
                 db.add(new_pred)
                 db.commit()

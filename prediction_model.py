@@ -197,7 +197,19 @@ def load_training_data(league_id=None):
 def parse_date(date_str):
     if not date_str:
         return datetime.datetime.utcnow()
-    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d/%m/%Y %H:%M", "%d/%m/%y %H:%M"):
+    # Handle ISO 8601 strings (like ESPN dates)
+    if "T" in date_str:
+        iso_str = date_str.replace("Z", "+00:00")
+        try:
+            # Strip timezone offset to keep it naive UTC for sqlalchemy compatibility
+            dt = datetime.datetime.fromisoformat(iso_str)
+            if dt.tzinfo is not None:
+                dt = dt.astimezone(datetime.timezone.utc).replace(tzinfo=None)
+            return dt
+        except ValueError:
+            pass
+            
+    for fmt in ("%d/%m/%Y", "%d/%m/%y", "%Y-%m-%d", "%d/%m/%Y %H:%M", "%d/%m/%y %H:%M", "%Y-%m-%d %H:%M"):
         try:
             return datetime.datetime.strptime(date_str.strip(), fmt)
         except ValueError:

@@ -38,10 +38,20 @@
         <div class="last-sync">System Last Synced: <span id="last-updated">...</span></div>
     </header>
 
+    <div class="view-toggle-container">
+        <button id="btn-active-predictions" class="toggle-btn active" onclick="switchView('active')">📡 Active Beacons</button>
+        <button id="btn-past-predictions" class="toggle-btn" onclick="switchView('past')">📜 Prediction Archive</button>
+        <button id="btn-live-scores" class="toggle-btn" onclick="switchView('live')">⚽ Live Scores</button>
+    </div>
+
     <div class="filter-container">
         <div id="league-filters" class="filter-bar">
             <!-- Dynamic filters injected here -->
         </div>
+    </div>
+
+    <div id="live-scores-container" class="live-scores-container hidden">
+        <iframe src="https://www.scoreaxis.com/widget/live-matches?autoHeight=1&amp;theme=dark&amp;textColor=%23ffffff&amp;bodyBackground=%230a0b10&amp;itemBackground=%231e293b&amp;headerBackgroundColor=%230f172a&amp;accentColor=%2300f2ff" style="width: 100%; border: none; min-height: 600px; border-radius: 16px; background: rgba(15, 23, 42, 0.5);"></iframe>
     </div>
 
     <main id="prediction-grid">
