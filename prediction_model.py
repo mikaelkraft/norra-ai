@@ -125,9 +125,9 @@ def save_played_matches(records):
     finally:
         db.close()
 
-def load_cached_model():
-    """Loads scikit-learn models from a local pickle file if it is within the cache expiry limit."""
-    model_file = "model.pkl"
+def load_cached_model(league_id):
+    """Loads scikit-learn models from a local league-specific pickle file if it is within the cache expiry limit."""
+    model_file = f"model_{league_id}.pkl"
     if not os.path.exists(model_file):
         return None
     try:
@@ -136,31 +136,31 @@ def load_cached_model():
         file_age_hours = (time.time() - os.path.getmtime(model_file)) / 3600
         expiry_hours = float(os.getenv("MODEL_CACHE_EXPIRY_HOURS", "24"))
         if file_age_hours > expiry_hours:
-            print(f"Cached model is {file_age_hours:.1f} hours old (expired > {expiry_hours} hours).")
+            print(f"Cached model for league {league_id} is {file_age_hours:.1f} hours old (expired > {expiry_hours} hours).")
             return None
         with open(model_file, "rb") as f:
             model = pickle.load(f)
         return model
     except Exception as e:
-        print(f"Error loading cached model: {e}")
+        print(f"Error loading cached model for league {league_id}: {e}")
         return None
 
-def save_cached_model(model):
-    """Saves trained scikit-learn models dictionary to a local pickle file."""
-    model_file = "model.pkl"
+def save_cached_model(model, league_id):
+    """Saves the trained models to a local league-specific pickle file."""
+    model_file = f"model_{league_id}.pkl"
     try:
         import pickle
         with open(model_file, "wb") as f:
             pickle.dump(model, f)
         print(f"Successfully cached model to {model_file}")
     except Exception as e:
-        print(f"Error caching model: {e}")
+        print(f"Error saving cached model for league {league_id}: {e}")
 
-def load_training_data():
+def load_training_data(league_id=None):
     """Loads existing training data from the database for ML training, bypassing SQLAlchemy ORM overhead."""
     db = SessionLocal()
     try:
-        records = db.query(
+        query = db.query(
             MatchTrainingData.league_id,
             MatchTrainingData.home_rank,
             MatchTrainingData.away_rank,
@@ -173,7 +173,11 @@ def load_training_data():
             MatchTrainingData.home_goals,
             MatchTrainingData.away_goals,
             MatchTrainingData.result
-        ).all()
+        )
+        if league_id is not None:
+            query = query.filter(MatchTrainingData.league_id == league_id)
+            
+        records = query.all()
         
         if not records:
             return pd.DataFrame()
@@ -494,63 +498,36 @@ def prepopulate_real_historical_data():
         print("Real historical data import failed completely. Falling back to synthetic mock data.")
         prepopulate_synthetic_training_data()
 
-def fetch_training_data(api_key, league_ids):
+def fetch_training_data(api_key, league_id):
     """
-    Incremental Fetcher: Only fetches data for leagues with limited representation 
-    in the database to save API quota.
+    Incremental Fetcher: Only fetches data for the given league
+    if it has limited representation in the database.
     """
-    existing_df = load_training_data()
+    # Type guard for backward compatibility with list inputs
+    if isinstance(league_id, (list, tuple, set)):
+        if not league_id:
+            return pd.DataFrame()
+        league_id = list(league_id)[0]
+
+    existing_df = load_training_data(league_id)
     
     if existing_df.empty:
-        prepopulate_real_historical_data()
-        existing_df = load_training_data()
-        
-    # Progressive historical fetching is enabled by default (at most 1 league per run)
-    progressive_fetch = os.getenv("PROGRESSIVE_HISTORICAL_FETCH", "True").lower() in ("true", "1")
-    if not progressive_fetch:
-        print("Progressive historical data fetching is disabled. Using local/synthetic DB data.")
-        return existing_df
-
-    # Calculate how many samples we have per league
-    league_counts = {}
-    if not existing_df.empty:
-        league_counts = existing_df.get('league_id', pd.Series()).value_counts().to_dict()
-
-    # Get maximum number of leagues to fetch per run (default: 1)
-    try:
-        max_fetches = int(os.getenv("MAX_LEAGUE_FETCHES_PER_RUN", "1"))
-    except ValueError:
-        max_fetches = 1
-
-    fetched_this_run = 0
-    print(f"Auditing wholesome training depth for {len(league_ids)} leagues (Max fetches this run: {max_fetches})...")
-    
-    for league_id in league_ids:
-        # Check API quota safeguard
-        import football_api
-        if football_api.API_QUOTA_EXCEEDED:
-            print("Progressive Fetch: API quota limit was exceeded. Halting training fetch sequence.")
-            break
-
-        # Target: at least 50 high-quality samples per league
-        current_count = league_counts.get(league_id, 0)
-        if current_count >= 50:
-            continue
+        # Prepopulate Swedish league if it's SWE (to boot up local testing)
+        if league_id == 113:
+            prepopulate_real_historical_data()
+            existing_df = load_training_data(league_id)
             
-        if fetched_this_run >= max_fetches:
-            print(f"Progressive Fetch: Max fetches reached ({max_fetches}). Skipping league {league_id} for next runs.")
-            break
-            
+    # Check if we need progressive fetching
+    current_count = len(existing_df) if not existing_df.empty else 0
+    if current_count < 50:
         print(f"Progressive Fetch: Fetching fresh training context for League {league_id} (Current: {current_count})...")
-        fetched_this_run += 1
-        
         try:
             fetch_football_data_co_uk_historical(league_id)
+            existing_df = load_training_data(league_id)
         except Exception as e:
             print(f"Progressive Fetch failed for league {league_id}: {e}")
-    
-    # Reload full wholesome dataset
-    return load_training_data()
+            
+    return existing_df
 
 def process_fixtures_data(fixtures_data, api_key):
     processed_data = []
@@ -1284,6 +1261,8 @@ def get_local_team_stats(team_name, league_id, season):
     finally:
         db.close()
 
+_loaded_models_cache = {}
+ 
 def get_match_prediction(fixture, api_key, model=None):
     """
     Calculates a prediction based on form, H2H, venue, and ML Model using local DB data.
@@ -1294,6 +1273,38 @@ def get_match_prediction(fixture, api_key, model=None):
     league_id = fixture['league']['id']
     season = fixture['league'].get('season', 2025)
     
+    # Check if this league is actually seeded (at least 10 matches)
+    db = SessionLocal()
+    try:
+        match_count = db.query(PlayedMatch.id).filter(PlayedMatch.league_id == league_id).limit(10).count()
+    finally:
+        db.close()
+        
+    if match_count < 10:
+        return {
+            "main": "Skipped - Insufficient Data",
+            "confidence": "0%",
+            "dc": "N/A",
+            "ht": "N/A",
+            "corners": 0,
+            "ml": "Insufficient Data",
+            "ou_refined": "N/A",
+            "btts": "N/A",
+            "dnb": "N/A",
+            "multi_goals": "N/A",
+            "ht_ft": "N/A",
+            "combos": "N/A",
+            "star_power": "N/A",
+            "h2h_dom": 0,
+            "league_avg_goals": 2.5,
+            "v4_omniscience": {
+                "poisson": "0.0",
+                "derby": "No",
+                "stability": "N/A",
+                "injuries": "N/A"
+            }
+        }
+        
     # 1. Match/Standardize team names against local DB
     home_db_name = find_db_team_name(home_name, league_id)
     away_db_name = find_db_team_name(away_name, league_id)
@@ -1307,7 +1318,21 @@ def get_match_prediction(fixture, api_key, model=None):
     if temp and (temp < 0 or temp > 35): 
         weather_impact -= 5
         
-    quota_conservation = True
+    # Dynamically load/train league-specific model if not provided
+    global _loaded_models_cache
+    if model is None or not isinstance(model, dict):
+        if league_id in _loaded_models_cache:
+            model = _loaded_models_cache[league_id]
+        else:
+            model = load_cached_model(league_id)
+            if not model:
+                print(f"No cached model for league {league_id} found. Training on the fly...")
+                train_df = fetch_training_data(None, league_id)
+                if not train_df.empty:
+                    model = train_model(train_df)
+                    save_cached_model(model, league_id)
+            if model:
+                _loaded_models_cache[league_id] = model
 
     # Core parameters fetched from local database
     home_form = get_local_form(home_db_name, league_id)

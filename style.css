@@ -587,19 +587,27 @@ footer span {
         width: 100%;
     }
     .chat-widget {
+        position: static;
+    }
+    .chat-icon {
+        position: fixed;
         right: 15px;
         bottom: 15px;
+        z-index: 1500;
     }
     .chat-window {
         position: fixed;
         left: 12px;
         right: 12px;
-        width: auto;
+        width: calc(100% - 24px);
         max-width: none;
         bottom: 85px;
         height: 380px;
         border-radius: 16px;
         z-index: 9999;
+    }
+    footer {
+        padding-bottom: 6rem;
     }
 }
 

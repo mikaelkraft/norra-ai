@@ -65,7 +65,7 @@ def main():
     
     # 4. Train Model
     print("\n[Step 4] Training the ML model on local DB data...")
-    train_df = fetch_training_data(None, [113])
+    train_df = fetch_training_data(None, 113)
     model = train_model(train_df)
     print("[SUCCESS] Model trained successfully.")
     
@@ -74,14 +74,14 @@ def main():
     from prediction_model import save_cached_model, load_cached_model
     try:
         # Remove any existing cache file
-        if os.path.exists("model.pkl"):
-            os.remove("model.pkl")
+        if os.path.exists("model_113.pkl"):
+            os.remove("model_113.pkl")
             
-        save_cached_model(model)
-        if not os.path.exists("model.pkl"):
-            raise FileNotFoundError("model.pkl was not created on disk.")
+        save_cached_model(model, 113)
+        if not os.path.exists("model_113.pkl"):
+            raise FileNotFoundError("model_113.pkl was not created on disk.")
             
-        loaded_model = load_cached_model()
+        loaded_model = load_cached_model(113)
         if not loaded_model:
             raise ValueError("Failed to load cached model from disk.")
             

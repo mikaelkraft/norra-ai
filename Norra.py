@@ -93,22 +93,8 @@ def fetch_predictions(api_key=None, dry_run=False):
     except Exception as e:
         print(f"Failed to update active season matches: {e}")
 
-    # 3. Load or train the ML model on local DB data
-    try:
-        from prediction_model import load_cached_model, fetch_training_data, train_model, save_cached_model
-        model = load_cached_model()
-        if not model:
-            print("No cached model found or cache expired. Retraining model...")
-            training_leagues = [l["league_id"] for l in leagues]
-            train_df = fetch_training_data(None, training_leagues)
-            model = train_model(train_df)
-            if model:
-                save_cached_model(model)
-        else:
-            print("Loaded trained models successfully from local cache.")
-    except Exception as e:
-        print(f"ML Training / Loading failed, falling back to rule-engine: {e}")
-        model = None
+    # 3. ML models are loaded/trained dynamically per-league in the prediction engine
+    model = None
 
     # 4. Convert ESPN fixtures to mock API-Football dictionary format
     fixtures = []
@@ -215,6 +201,10 @@ def generate_predictions(fixtures, api_key, model=None):
 
         # Get Hybrid ML + Rule-Engine Prediction locally
         detailed_data = get_match_prediction(fixture, None, model=model)
+        
+        if detailed_data.get("main") == "Skipped - Insufficient Data":
+            print(f"Skipping match {home_team} vs {away_team} due to insufficient database records.")
+            continue
         
         league_name = fixture['league']['name']
         venue = fixture['fixture'].get('venue', {}).get('name', 'Main Stadium')
