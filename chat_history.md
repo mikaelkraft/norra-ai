@@ -106,3 +106,13 @@
   * **X Character Space Limit Optimization**:
     * Modified `generate_dynamic_advice()` in [Norra.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/Norra.py) to accept a `short` boolean parameter. When `short=True`, it generates a compact, high-impact advice sentence under 50 characters.
     * Separated posting templates in `post_predictions()`: unverified X accounts get a clean `tweet_text` strictly under 220 characters utilizing `short=True` advice, while Telegram broadcasts get the full rich-formatted `telegram_text` including Star Power, Halftime Prediction, and long dynamic advice text.
+  * **League-Specific ML Models & Training Isolation**:
+    * Modified `fetch_training_data()`, `load_training_data()`, `load_cached_model()`, and `save_cached_model()` in [prediction_model.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/prediction_model.py) to accept a `league_id` parameter, segregating historical training contexts. The model for Swedish matches is now trained *strictly* on Swedish matches (e.g. `model_113.pkl`), completely preventing data leakage/mixing between different leagues.
+    * Added memory-caching dictionary (`_loaded_models_cache`) to avoid repeated pickle read calls.
+  * **Unseeded Matches Database Safeguard**:
+    * Implemented an database match count check in `get_match_prediction()` to query if the league has at least 10 matches seeded.
+    * If the league is unseeded (like World Cup or international friendlies), it immediately returns `"Skipped - Insufficient Data"`.
+    * Configured [Norra.py](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/Norra.py) to filter out and skip predictions containing this status, preventing garbage baseline/50-50 guesses from displaying or posting.
+  * **Mobile Chatbot & Footer Clearance Layout Fixes**:
+    * Set `.chat-widget` to `position: static` and `.chat-icon` to `position: fixed` in [style.css](file:///c:/Users/HP/OneDrive/Documents/norra_ai/norra-ai-1/style.css) on mobile screens. This breaks parent containing-block constraints and centers the chat modal (`.chat-window`) correctly inside the mobile viewport.
+    * Added `padding-bottom: 6rem` on the footer under mobile viewports to prevent the floating chat button from obstructing terms/privacy links.
